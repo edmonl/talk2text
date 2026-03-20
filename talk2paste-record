@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly action="${1:-}"
+readonly wav_path='/tmp/talk2paste-whiper.wav'
+readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pipewire}"
+readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
+readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
+readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
+readonly stop_timeout_soft="${TALK2PASTE_RECORD_STOP_TIMEOUT_SOFT:-2}"
+readonly stop_timeout_hard="${TALK2PASTE_RECORD_STOP_TIMEOUT_HARD:-2}"
+readonly lock_fd=100
+
+runtime_base_dir() {
+	if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && [ -w "$XDG_RUNTIME_DIR" ]; then
+		printf '%s\n' "$XDG_RUNTIME_DIR"
+		return 0
+	fi
+
+	printf '/tmp\n'
+}
+
+readonly runtime_dir="$(runtime_base_dir)/talk2paste"
+readonly lock_path="${runtime_dir}/record.lock"
+readonly pid_path="${runtime_dir}/recorder.pid"
+readonly ffmpeg_log_path="${runtime_dir}/recorder.ffmpeg.log"
+
+notify() {
+	local message="$1"
+
+	if command -v notify-send >/dev/null 2>&1; then
+		notify-send 'talk2paste' "$message" >/dev/null 2>&1 || true
+	fi
+}
+
+fail() {
+	local message="$1"
+
+	printf '%s\n' "$message" >&2
+	notify "Something didn't work as expected"
+	exit 1
+}
+
+ensure_runtime_dir() {
+	mkdir -p "$runtime_dir"
+}
+
+acquire_lock() {
+	ensure_runtime_dir
+	if ! command -v flock >/dev/null 2>&1; then
+		fail 'flock is required'
+	fi
+
+	exec 100>"$lock_path"
+	flock -x "$lock_fd"
+}
+
+read_pid() {
+	if [ ! -f "$pid_path" ]; then
+		return 1
+	fi
+
+	local pid
+	pid="$(cat "$pid_path" 2>/dev/null || true)"
+	if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+		rm -f "$pid_path"
+		return 1
+	fi
+
+	printf '%s\n' "$pid"
+}
+
+pid_matches_recorder() {
+	local pid="$1"
+	local cmdline
+
+	if [ ! -r "/proc/${pid}/cmdline" ]; then
+		return 1
+	fi
+
+	cmdline="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
+	[[ "$cmdline" == *ffmpeg* && "$cmdline" == *"$wav_path"* ]]
+}
+
+clear_stale_pid() {
+	local pid
+
+	if ! pid="$(read_pid)"; then
+		return 0
+	fi
+
+	if ! kill -0 "$pid" >/dev/null 2>&1; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	if ! pid_matches_recorder "$pid"; then
+		rm -f "$pid_path"
+	fi
+}
+
+wait_for_exit() {
+	local pid="$1"
+	local timeout="$2"
+	local elapsed=0
+
+	while kill -0 "$pid" >/dev/null 2>&1; do
+		if [ "$elapsed" -ge "$timeout" ]; then
+			return 1
+		fi
+
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+
+	return 0
+}
+
+stop_pid() {
+	local pid="$1"
+	local hard_kill='false'
+
+	if ! kill -INT "$pid" >/dev/null 2>&1; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	if wait_for_exit "$pid" "$stop_timeout_soft"; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	if ! kill -TERM "$pid" >/dev/null 2>&1; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	if wait_for_exit "$pid" "$stop_timeout_hard"; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	kill -KILL "$pid" >/dev/null 2>&1 || true
+	wait_for_exit "$pid" 1 || true
+	rm -f "$pid_path"
+	rm -f "$wav_path"
+	hard_kill='true'
+
+	if [ "$hard_kill" = 'true' ]; then
+		notify "Something didn't work as expected"
+	fi
+}
+
+start_recording() {
+	local pid
+
+	clear_stale_pid
+
+	if pid="$(read_pid)"; then
+		if kill -0 "$pid" >/dev/null 2>&1 && pid_matches_recorder "$pid"; then
+			stop_pid "$pid"
+		else
+			rm -f "$pid_path"
+		fi
+	fi
+
+	rm -f "$wav_path"
+
+	if ! command -v ffmpeg >/dev/null 2>&1; then
+		fail 'ffmpeg is required'
+	fi
+
+	nohup ffmpeg -nostdin -hide_banner -loglevel error \
+		-f "$default_input_format" \
+		-i "$default_input_device" \
+		-ac "$recorder_channels" \
+		-ar "$recorder_sample_rate" \
+		-c:a pcm_s16le \
+		"$wav_path" >>"$ffmpeg_log_path" 2>&1 </dev/null &
+
+	pid=$!
+	printf '%s\n' "$pid" >"$pid_path"
+
+	sleep 0.1
+	if ! kill -0 "$pid" >/dev/null 2>&1; then
+		rm -f "$pid_path"
+		fail "ffmpeg failed to start; see ${ffmpeg_log_path}"
+	fi
+
+	notify 'Recording...'
+}
+
+stop_recording() {
+	local pid
+
+	clear_stale_pid
+
+	if ! pid="$(read_pid)"; then
+		return 0
+	fi
+
+	if ! pid_matches_recorder "$pid"; then
+		rm -f "$pid_path"
+		return 0
+	fi
+
+	stop_pid "$pid"
+}
+
+status_recording() {
+	local pid
+
+	clear_stale_pid
+
+	if ! pid="$(read_pid)"; then
+		printf 'inactive\n'
+		return 0
+	fi
+
+	if kill -0 "$pid" >/dev/null 2>&1 && pid_matches_recorder "$pid"; then
+		printf 'active %s\n' "$pid"
+		return 0
+	fi
+
+	rm -f "$pid_path"
+	printf 'inactive\n'
+}
+
+usage() {
+	cat <<'EOF'
+usage: talk2paste-record <start|stop|status>
+
+Environment:
+  TALK2PASTE_RECORD_INPUT_FORMAT   ffmpeg input format (default: pipewire)
+  TALK2PASTE_RECORD_INPUT_DEVICE   ffmpeg input device (default: default)
+  TALK2PASTE_RECORD_CHANNELS       recorder channel count (default: 1)
+  TALK2PASTE_RECORD_SAMPLE_RATE    recorder sample rate (default: 16000)
+EOF
+}
+
+main() {
+	case "$action" in
+	start)
+		acquire_lock
+		start_recording
+		;;
+	stop)
+		acquire_lock
+		stop_recording
+		;;
+	status)
+		acquire_lock
+		status_recording
+		;;
+	*)
+		usage >&2
+		exit 1
+		;;
+	esac
+}
+
+main
