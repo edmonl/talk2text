@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pipewire}"
+readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pulse}"
 readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
 readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
 readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
@@ -19,7 +19,7 @@ temp_dir="$temp_dir/talk2paste"
 readonly temp_dir
 
 notify() {
-  notify-send 'talk2paste' "$1" >/dev/null 2>&1 || true
+  notify-send -t 5000 'talk2paste' "$1" >/dev/null 2>&1 || true
 }
 
 fail() {
