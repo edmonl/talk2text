@@ -145,7 +145,7 @@ if [ "$server_source" = '' ]; then
     git -C "$repo_dir" pull --ff-only
   fi
 
-  cmake -S "$repo_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+  cmake -S "$repo_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=1
   cmake --build "$build_dir" -j"$(nproc)"
 
   if [ ! -x "$repo_server_bin" ]; then
