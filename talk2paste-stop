@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pipewire}"
+readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
+readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
+readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
+readonly stop_timeout="${TALK2PASTE_RECORD_STOP_TIMEOUT:-0.2s}"
+
+temp_dir='/tmp'
+if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
+  temp_dir="$TMPDIR"
+fi
+temp_dir="$temp_dir/talk2paste"
+readonly temp_dir
+readonly cmd_prefix="ffmpeg -nostdin -hide_banner -loglevel error -f $default_input_format -i $default_input_device -ac $recorder_channels -ar $recorder_sample_rate -c:a pcm_s16le $temp_dir"
+
+pid_matches_known_prefix() {
+  local pid="$1"
+  local clip_id="$2"
+  local cmdline
+  cmdline="$(tr '\0' ' ' <"/proc/${pid}/cmdline" || true)"
+  [ "${cmdline% }" = "$cmd_prefix/$clip_id.wav" ]
+}
+
+stop() {
+  local pid_path
+  local clip_id
+  local pid
+
+  shopt -s nullglob
+  local pids=()
+  for pid_path in "$temp_dir"/*.pid; do
+    clip_id="$(basename "$pid_path" .pid)"
+    pid="$(cat "$pid_path" 2>/dev/null || true)"
+    rm -f "$pid_path"
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      continue
+    fi
+
+    if ! pid_matches_known_prefix "$pid" "$clip_id"; then
+      continue
+    fi
+    kill -INT "$pid" >/dev/null 2>&1 || true
+    pids+=("$pid")
+  done
+  shopt -u nullglob
+
+  sleep "$stop_timeout"
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -TERM "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+
+  sleep "$stop_timeout"
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
+usage() {
+  cat <<'EOF' >&2
+usage: talk2paste-stop
+
+Environment:
+  TALK2PASTE_RECORD_INPUT_FORMAT      ffmpeg input format (default: pipewire)
+  TALK2PASTE_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
+  TALK2PASTE_RECORD_CHANNELS          recorder channel count (default: 1)
+  TALK2PASTE_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
+  TALK2PASTE_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 0.2s)
+EOF
+}
+
+main() {
+  case "$#" in
+  0)
+    stop
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

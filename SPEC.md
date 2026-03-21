@@ -1,204 +1,182 @@
-# Whisper Push-to-Talk — Phase 1 (Design Specification)
+# talk2paste
 
-## Overview
-A minimal push-to-talk speech-to-text system using a locally hosted Whisper model. Audio is recorded on key hold, transcribed on release, and copied to the clipboard.
+## Goal
+A minimal push-to-talk speech-to-text tool for Sway on Debian Linux.
 
-Priorities:
-- Low latency (persistent model in a long-lived server)
-- Predictability (clipboard output)
-- Minimal complexity
-- Clear feedback via notifications, including generic error signals
+While the key is held, audio is recorded with `ffmpeg`.
+When the key is released, recording stops.
+The newest completed clip is transcribed by a local Whisper server and copied to the clipboard.
 
----
+## Core Design
 
-## Components (Concrete)
+### Temp Folder
+All runtime and temp files live in one folder:
 
-1. **Whisper Server**
-   - Persistent local HTTP service (localhost)
-   - Managed by user `systemd` (auto-start + restart)
-   - Model: smaller than medium (e.g., small)
-   - Implementation: `whisper.cpp` `whisper-server`
-   - Keeps model loaded between requests to avoid per-use startup cost
-   - Default port: `9898`
-   - Installed binary path: `~/bin/whisper-server`
-   - Installed model path: `~/stow/whisper-models/ggml-<model>.bin`
+- `$TMPDIR/talk2paste` when `TMPDIR` is set and writable
+- otherwise `/tmp/talk2paste`
 
-2. **Recorder**
-   - Uses PipeWire via `ffmpeg`
-   - Records mono, 16 kHz WAV
-   - Output: `/tmp/talk2paste-whiper.wav` (overwritten each use)
-   - Runs only during key hold
-   - Started on key press through a recorder control script
-   - Uses a PID file and lock in `$XDG_RUNTIME_DIR/talk2paste`, with `/tmp` as fallback when needed
-   - Uses file descriptor `100` to hold the lock on `record.lock`
-   - Runs `ffmpeg` with `-nostdin`
+This folder contains only per-clip runtime files.
+No separate runtime directory is used.
 
-3. **Dispatcher**
-   - Triggered on key release
-   - Takes the same `record.lock` on file descriptor `100`
-   - Waits for recorder to fully exit
-   - Treats recorder completion as: no live recorder process and cleared `recorder.pid`
-   - Validates audio duration
-   - Sends WAV via HTTP multipart request → server → receives text
-   - Performs minimal cleanup
-   - Copies result to clipboard
+### Per-Clip Files
+Each recording uses a unique clip ID.
+The clip ID must be lexically sortable by creation time.
 
-4. **Clipboard**
-   - `wl-copy` (Wayland / Sway)
+Example:
 
-5. **Notifications (Feedback)**
-   - `notify-send`
+`20260320T154501.123456789-ab12cd`
 
-6. **Keybinding Layer**
-   - Managed by Sway
-   - Handles press (start) / release (stop + dispatch)
+Format:
 
----
+- wall-clock timestamp
+- nanoseconds
+- short random suffix for uniqueness
 
-## Interaction Flow
+Each clip creates:
 
-Hold Key  
-→ Stop any previous recorder process still tracked by PID file  
-→ Start recording  
-→ Notify: "Recording..."
+- `<clip_id>.wav`
+- `<clip_id>.pid`
+- `<clip_id>.ffmpeg.log` during recording
+- `<clip_id>.response.json` during transcription
 
-Release Key  
-→ Stop recording with a graceful signal  
-→ Wait for recorder to exit  
-→ Confirm `recorder.pid` is cleared and no recorder process is still live  
-→ Notify: "Transcribing..."  
-→ Send audio to server  
-→ Receive text  
-→ Copy to clipboard  
-→ Notify: "Ready: <preview>"
+`<clip_id>.pid` contains the `ffmpeg` PID for that clip, not the recorder PID.
 
-If something fails  
-→ Notify: "Something didn't work as expected"
+## Components
 
----
+### Whisper Server
+- Persistent local HTTP service on `127.0.0.1:9898`
+- Implemented with `whisper.cpp` `whisper-server`
+- Managed by user `systemd`
+- Keeps the model loaded between requests
 
-## Data Flow
+### Recorder
+- Started on key press with `talk2paste-record` and no subcommand
+- Launches `ffmpeg` to record mono 16 kHz WAV audio
+- Creates a unique `<clip_id>.wav`
+- Writes the `ffmpeg` PID to `<clip_id>.pid`
+- Detaches from the key press path and completes the rest of the lifecycle in the background
+- Waits for its own `ffmpeg` process to exit
+- After `ffmpeg` exits:
+  - if its own `<clip_id>.pid` still exists, removes it and treats any non-zero `ffmpeg` exit as failure
+  - verifies that its WAV exists and is readable
+  - verifies that its WAV is a valid audio file
+  - verifies that its WAV duration is at least 1 second
+  - checks whether its clip ID is the newest among all remaining `.wav` files
+  - if stale, deletes its own WAV and exits
+  - if current, sends the WAV to Whisper
+  - deletes the WAV after successful submission
+  - treats an empty returned text as failure
+  - copies the returned text to the clipboard
+  - shows a notification with a short preview
 
-Mic  
-→ ffmpeg → /tmp/talk2paste-whiper.wav  
-→ Dispatcher → HTTP (localhost)  
-→ Whisper Server → text  
-→ Clipboard (wl-copy)  
-→ Notification preview  
+### Release Handler
+- Triggered on key release
+- Reads all `*.pid` files in the temp folder
+- For each pid file:
+  - reads the `ffmpeg` PID
+  - verifies the PID still belongs to an `ffmpeg` process whose argv matches the expected known prefix and output WAV path
+  - sends graceful stop to that `ffmpeg` process
+  - deletes the pid file once it has been read
 
----
+## Runtime Flow
 
-## Key Decisions
+### Key Press
+1. Start a recorder instance.
+2. Recorder creates a new clip ID.
+3. Recorder starts a detached background worker.
+4. Worker starts `ffmpeg` writing `<clip_id>.wav`.
+5. Worker writes `<clip_id>.pid`.
+6. Notify: `Recording...`
 
-- Clipboard-only output (no typing)
-- Local HTTP interface for the transcription server
-- `whisper.cpp` `whisper-server` as the transcription backend
-- User `systemd` service for `whisper-server`
-- Default HTTP port is `9898`
-- Installed binary is copied to `~/bin`
-- Installed model is copied to `~/stow/whisper-models`
-- Fixed temp file (`/tmp/talk2paste-whiper.wav`)
-- No concurrency (single active operation)
-- Recorder state is managed with an exact PID file plus a lock
-- Recorder lock is taken on `record.lock` via file descriptor `100`
-- Dispatcher uses the same lock and PID state as the recorder control path
-- Installer manages only the `whisper-server` binary and user service it installs itself
-- If an external `whisper-server` already exists, installer must not assume its model path or overwrite its service configuration
+### Key Release
+1. Release handler reads all `*.pid` files.
+2. Release handler validates each PID still matches the expected `ffmpeg` argv.
+3. Release handler sends `SIGINT` first.
+4. Release handler deletes each pid file after reading it.
 
-### Rationale
+### Recorder Completion
+1. Recorder waits until its own `ffmpeg` exits.
+2. If its own `<clip_id>.pid` still exists, recorder removes it and treats any non-zero `ffmpeg` exit as failure.
+3. Recorder validates the resulting WAV.
+4. Recorder compares its clip ID to the clip IDs of all remaining `.wav` files.
+5. If any newer WAV exists, recorder deletes its own WAV and exits.
+6. Otherwise recorder notifies `Transcribing...`
+7. Recorder sends the WAV to the Whisper server.
+8. After successful submission, recorder deletes its WAV.
+9. Recorder extracts the returned text.
+10. Recorder copies the text with `wl-copy`.
+11. Notify: `Ready: <preview>`
 
-- A persistent HTTP server avoids repeated process startup and model load overhead
-- This matters most for short push-to-talk clips, where fixed startup cost is a large share of total latency
-- `whisper.cpp` keeps the backend simple for Phase 1
-- User `systemd` provides restart handling, logging, and lifecycle control suited to a background backend service
+## Ordering Rule
+The newest clip wins.
 
----
+“Newest” is determined only by the clip ID embedded in the filename.
+Do not use filesystem timestamps such as `mtime`, `ctime`, or creation time.
 
-## Safeguards (Required)
+## Safeguards
 
-### 1. Single Recorder Guarantee
-- Only one recorder process allowed
-- Starting a new recording must check the recorder PID file and terminate any still-running recorder before starting another one
-- Recorder start and stop operations must share a lock to avoid races between press and release handling
+### Process Ownership
+Before signaling a PID from `<clip_id>.pid`, the release handler must verify:
 
-### 2. Recorder Completion Guarantee
-- Dispatcher runs only after recorder fully exits
-- Ensures WAV file is finalized and readable
-- Dispatcher must not infer completion from the WAV file alone
-- Dispatcher must hold `record.lock` while checking recorder state before it reads the WAV file
-- Recorder stop should send `SIGINT` first and wait for clean exit
-- If needed, recorder stop may escalate to `SIGTERM`
-- `SIGKILL` is last-resort cleanup only; if used, the WAV file must be discarded and dispatch must not run
+- the PID is still live
+- the process is `ffmpeg`
+- the process argv still matches the expected known `ffmpeg` prefix for talk2paste recording
+- shell redirections used when launching `ffmpeg` are not part of this check because they do not appear in `/proc/<pid>/cmdline`
 
-### 3. No Overlap Between Record and Dispatch
-- While dispatching, new recordings are ignored or blocked
-- Prevents file overwrite during read
+This avoids killing an unrelated process if a PID has been reused.
 
-### 4. Minimum Recording Duration
-- Ignore recordings shorter than 1 second
+### Graceful Stop
+- Stop recording with `SIGINT` first
+- `SIGTERM` is allowed as escalation if needed
+- `SIGKILL` is last resort only
+- A single configurable stop timeout may be used between escalation steps
+- After release handling removes `<clip_id>.pid`, the recorder may still accept and transcribe a WAV produced by a signaled `ffmpeg` if the WAV passes normal validation
 
-### 5. File Stability Check (Minimal)
-- Dispatcher proceeds only if:
-  - Dispatcher holds `record.lock` on file descriptor `100`
-  - File exists
-  - Duration is above threshold
-- Recorder PID file has been cleared
-- No live recorder process remains for the PID previously tracked in `recorder.pid`
+### Minimum Clip Length
+- Ignore clips shorter than 1 second
+- This is a silent drop, not an error notification
 
-### 6. Server Availability
-- Whisper server runs continuously
-- Auto-restart handled by user `systemd`
-- Dispatcher fails fast with a notification if the server is unavailable
+### WAV Validation
+Before transcription, the recorder must verify:
 
-### 7. Managed Installation Boundaries
-- Installer may install required OS packages only when missing
-- Installer may build and install `whisper-server` only when no managed copy exists
-- Installer may create a user service only when it knows the full managed binary path and model path
-- Installer must not create or overwrite a service for an external pre-existing `whisper-server`
-- Uninstall removes only the copied binary and user service; it does not remove packages, repo clone, or model files
+- the WAV file exists
+- the WAV file is readable
+- `ffprobe` can parse it successfully
+- duration is at least the minimum threshold
 
----
+If any of these checks fail, the WAV must be discarded and must not be transcribed.
+Broken or unreadable WAV output is an error.
+Minimum-length failure is not an error.
 
-## Feedback Design (Notifications)
+### Stale Clip Cleanup
+- A recorder that loses the “newest clip” check deletes its own WAV and exits
+- Release handler deletes pid files after reading them
+- Recorder deletes its WAV after successful submission to Whisper
+- Recorder deletes per-clip log and response files once they are no longer needed
 
-1. Recording started  
-   → Triggered on key press  
+## Feedback
+- On key press: `Recording...`
+- Before transcription of the winning clip: `Transcribing...`
+- On success: `Ready: <preview>`
+- On any failure: `Something didn't work as expected`
 
-2. Transcribing  
-   → Triggered after key release  
+## Dependencies
+Runtime expects:
 
-3. Result ready  
-   → Shows short preview of transcribed text  
-   → Confirms clipboard is populated  
+- `ffmpeg`
+- `ffprobe`
+- `curl`
+- `jq`
+- `wl-copy`
+- `notify-send`
+- `whisper-server`
 
-4. Error  
-   → Triggered when recording, transcription, clipboard copy, or server access fails  
-   → Uses a generic message such as "Something didn't work as expected"  
+Installer may ensure these dependencies exist, but runtime scripts should stay lean.
+The installer is Debian-specific for now and may use `apt-get` to install missing packages.
 
-5. Busy or stale recorder cleanup  
-   → Internal recorder cleanup happens before starting a new recording  
-   → No extra user-facing detail is required unless cleanup fails  
-
----
-
-## System Requirements
-
-Minimum:
-- CPU: 4 cores  
-- RAM: 4–8 GB  
-- GPU: not required  
-
-Recommended:
-- CPU: 6–8 cores  
-- RAM: 8–16 GB  
-
----
-
-## Non-Goals (Phase 1)
-
-- No typing injection  
-- No streaming transcription  
-- No Waybar integration  
-- No noise suppression  
-- No advanced text formatting  
-- No multi-language support  
+## Non-Goals
+- Typing injection
+- Streaming transcription
+- Multi-language support
+- Noise suppression
+- Waybar integration
