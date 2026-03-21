@@ -50,15 +50,25 @@ stop() {
   done
   shopt -u nullglob
 
+  if [ "${#pids[@]}" -eq 0 ]; then
+    return
+  fi
+
   sleep "$stop_timeout"
+  local remaining_pids=()
   for pid in "${pids[@]}"; do
     if kill -0 "$pid" >/dev/null 2>&1; then
       kill -TERM "$pid" >/dev/null 2>&1 || true
+      remaining_pids+=("$pid")
     fi
   done
 
+  if [ "${#remaining_pids[@]}" -eq 0 ]; then
+    return
+  fi
+
   sleep "$stop_timeout"
-  for pid in "${pids[@]}"; do
+  for pid in "${remaining_pids[@]}"; do
     if kill -0 "$pid" >/dev/null 2>&1; then
       kill -KILL "$pid" >/dev/null 2>&1 || true
     fi
