@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pipewire}"
+readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pulse}"
 readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
 readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
 readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
-readonly stop_timeout="${TALK2PASTE_RECORD_STOP_TIMEOUT:-0.2s}"
+readonly stop_timeout="${TALK2PASTE_RECORD_STOP_TIMEOUT:-2s}"
 
 temp_dir='/tmp'
 if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then

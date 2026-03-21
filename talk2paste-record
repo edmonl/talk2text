@@ -5,10 +5,10 @@ readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pulse}"
 readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
 readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
 readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
-readonly min_duration_seconds="${TALK2PASTE_MIN_DURATION_SECONDS:-1}"
+readonly min_duration_seconds="${TALK2PASTE_MIN_DURATION_SECONDS:-0.5}"
 readonly server_url="${TALK2PASTE_SERVER_URL:-http://127.0.0.1:9898/inference}"
-readonly server_connect_timeout="${TALK2PASTE_SERVER_CONNECT_TIMEOUT:-2}"
-readonly server_max_time="${TALK2PASTE_SERVER_MAX_TIME:-120}"
+readonly server_connect_timeout="${TALK2PASTE_SERVER_CONNECT_TIMEOUT:-1}"
+readonly server_max_time="${TALK2PASTE_SERVER_MAX_TIME:-10}"
 readonly preview_length="${TALK2PASTE_NOTIFY_PREVIEW_LENGTH:-80}"
 
 temp_dir='/tmp'
@@ -23,7 +23,7 @@ notify() {
 }
 
 fail() {
-  notify "Something didn't work as expected"
+  notify "Something didn't work as expected: $*"
   exit 1
 }
 
@@ -108,7 +108,7 @@ start_recording() {
     -ac "$recorder_channels" \
     -ar "$recorder_sample_rate" \
     -c:a pcm_s16le \
-    "$wav_path" >"$ffmpeg_log_path" 2>&1 </dev/null &
+    "$wav_path" >"$ffmpeg_log_path" 2>&1 &
   local ffmpeg_pid="$!"
   printf '%s\n' "$ffmpeg_pid" >"$pid_path"
 
@@ -119,29 +119,34 @@ start_recording() {
     if [ "$ffmpeg_status" -ne 0 ]; then
       # leave ffmpeg log for investigation
       rm -f "$wav_path"
-      fail
+      fail 'ffmpeg error'
     fi
   fi
 
   # now we know it's success, no need to leave the log behind
   rm -f "$ffmpeg_log_path"
 
-  local validate_status=0
-  validate_wav "$wav_path" || validate_status="$?"
-  if [ "$validate_status" -ne 0 ]; then
-    rm -f "$wav_path"
-    if [ "$validate_status" -eq 2 ]; then
-      exit 0
-    fi
-    fail
-  fi
-
   if ! is_newest_clip "$clip_id"; then
     rm -f "$wav_path"
     exit 0
   fi
 
+  local validate_status=0
+  validate_wav "$wav_path" || validate_status="$?"
+  if [ "$validate_status" -ne 0 ]; then
+    if [ "$validate_status" -eq 2 ]; then
+      rm -f "$wav_path"
+      exit 0
+    fi
+    fail "invalid wav $wav_path"
+  fi
+
   notify 'Transcribing...'
+
+  if ! is_newest_clip "$clip_id"; then
+    rm -f "$wav_path"
+    exit 0
+  fi
 
   local response_path="${temp_dir}/${clip_id}.response.json"
   if ! curl \
@@ -152,11 +157,13 @@ start_recording() {
     --max-time "$server_max_time" \
     --output "$response_path" \
     --request POST \
+    --form temperature=0 \
+    --form temperature_inc=0.9 \
     --form "file=@${wav_path}" \
     --form 'response_format=json' \
     "$server_url"; then
     rm -f "$wav_path" "$response_path"
-    fail
+    fail 'transcription error'
   fi
 
   rm -f "$wav_path"
@@ -165,11 +172,11 @@ start_recording() {
   transcript="$(jq -r '.text // empty' <"$response_path" 2>/dev/null || true)"
   rm -f "$response_path"
   if [ "$transcript" = "" ]; then
-    fail
+    fail 'no transcript'
   fi
 
   if ! printf '%s' "$transcript" | wl-copy; then
-    fail
+    fail 'copy failed'
   fi
 
   local preview
@@ -197,7 +204,6 @@ Environment:
   TALK2PASTE_NOTIFY_PREVIEW_LENGTH    notification preview length (default: 80)
 EOF
 }
-
 
 main() {
   case "$#" in

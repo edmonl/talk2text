@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Configuration
 action="${1:-install}"
-model_name="${MODEL_NAME:-small.en}"
+model_name="${MODEL_NAME:-tiny.en}"
 port="${PORT:-9898}"
 bin_dir="${HOME}/bin"
 model_dir="${HOME}/stow/whisper-models"
@@ -257,6 +257,6 @@ Example checks:
   journalctl --user -u ${service_name} -n 50 --no-pager
 
 Example Sway config:
-  bindsym --release F8 exec ${bin_dir}/talk2paste-stop
-  bindsym F8 exec ${bin_dir}/talk2paste-record
+  bindsym --no-repeat F12 exec ${bin_dir}/talk2paste-record
+  bindsym --release F12 exec ${bin_dir}/talk2paste-stop
 EOF
