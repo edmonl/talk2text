@@ -4,7 +4,7 @@ set -euo pipefail
 # Configuration
 readonly action="${1:---install}"
 readonly bin_dir="$HOME/bin"
-readonly whisper_model_name="${MODEL_NAME:-tiny.en}"
+readonly whisper_model_name="${MODEL_NAME:-small.en}"
 readonly whisper_server_port="${PORT:-9898}"
 readonly whisper_model_dir="$HOME/stow/whisper-models"
 readonly whisper_repo_dir="$HOME/projects/whisper.cpp"
@@ -20,9 +20,9 @@ fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly script_dir
 readonly record_script_source="$script_dir/talk2paste-record"
-readonly dispatch_script_source="$script_dir/talk2paste-stop"
+readonly stop_script_source="$script_dir/talk2paste-stop"
 readonly record_script_target="$bin_dir/talk2paste-record"
-readonly dispatch_script_target="$bin_dir/talk2paste-stop"
+readonly stop_script_target="$bin_dir/talk2paste-stop"
 readonly whisper_repo_build_dir="$whisper_repo_dir/build"
 readonly whisper_repo_model_dir="$whisper_repo_dir/models"
 readonly whisper_repo_server_bin="$whisper_repo_build_dir/bin/whisper-server"
@@ -46,8 +46,8 @@ need_cmd systemctl
 
 if [ "$action" = '--uninstall' ]; then
   rm -f "$record_script_target"
-  rm -f "$dispatch_script_target"
-  echo "Removed whisper runtime scripts: $record_script_target, $dispatch_script_target"
+  rm -f "$stop_script_target"
+  echo "Removed whisper runtime scripts: $record_script_target, $stop_script_target"
 
   if [ -x "$whisper_server_bin" ]; then
     systemctl --user disable --now "$whisper_systemd_service_name" >/dev/null || true
@@ -159,7 +159,7 @@ fi
 
 mkdir -p "$bin_dir"
 cp "$record_script_source" "$record_script_target"
-cp "$dispatch_script_source" "$dispatch_script_target"
+cp "$stop_script_source" "$stop_script_target"
 cat <<'EOF'
 Install complete.
 
