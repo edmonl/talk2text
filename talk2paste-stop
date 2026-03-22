@@ -80,11 +80,11 @@ usage() {
 usage: talk2paste-stop
 
 Environment:
-  TALK2PASTE_RECORD_INPUT_FORMAT      ffmpeg input format (default: pipewire)
+  TALK2PASTE_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
   TALK2PASTE_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
   TALK2PASTE_RECORD_CHANNELS          recorder channel count (default: 1)
   TALK2PASTE_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
-  TALK2PASTE_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 0.2s)
+  TALK2PASTE_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 2s)
 EOF
 }
 
