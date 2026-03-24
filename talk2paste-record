@@ -175,17 +175,17 @@ start_recording() {
     fail 'no transcript'
   fi
 
+  # clear noise
+  transcript="$(printf '%s' "$transcript" | tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//')"
   if ! printf '%s' "$transcript" | wl-copy; then
     fail 'copy failed'
   fi
 
-  local preview
-  preview="$(printf '%s' "$transcript" | tr '\n' ' ' | tr '\r' ' ' | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
-  if [ "${#preview}" -gt "$preview_length" ]; then
-    preview="${preview:0:preview_length}..."
+  if [ "${#transcript}" -gt "$((preview_length - 3))" ]; then
+    transcript="${transcript:0:preview_length}..."
   fi
 
-  notify "Ready: ${preview}"
+  notify "Ready: ${transcript}"
 }
 
 usage() {
