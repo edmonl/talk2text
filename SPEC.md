@@ -31,6 +31,7 @@ Each recording gets a unique clip ID based on the current timestamp plus a short
 - validates the WAV with `ffprobe`
 - ignores clips shorter than the configured minimum duration
 - sends the winning clip to the Whisper server
+- includes a cleaned `prompt` form field from the selection clipboard when it is not empty
 - copies the returned text with `wl-copy`
 - shows notifications for recording, transcription, success, and failures
 
@@ -61,6 +62,7 @@ Runtime scripts expect:
 - `curl`
 - `jq`
 - `wl-copy`
+- `wl-paste`
 - `notify-send`
 
 The installer additionally expects `systemctl`, `cmake`, `make`, and `git`.

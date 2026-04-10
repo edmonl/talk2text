@@ -91,6 +91,14 @@ validate_wav() {
   return 0
 }
 
+clean_text() {
+  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//'
+}
+
+get_prompt_from_clipboard() {
+  wl-paste --primary --no-newline 2>/dev/null | clean_text
+}
+
 start_recording() {
   local clip_id
   clip_id="$(new_clip_id)"
@@ -149,19 +157,27 @@ start_recording() {
   fi
 
   local response_path="${temp_dir}/${clip_id}.response.json"
-  if ! curl \
-    --silent \
-    --show-error \
-    --fail \
-    --connect-timeout "$server_connect_timeout" \
-    --max-time "$server_max_time" \
-    --output "$response_path" \
-    --request POST \
-    --form temperature=0 \
-    --form temperature_inc=0.9 \
-    --form "file=@${wav_path}" \
-    --form 'response_format=json' \
-    "$server_url"; then
+  local prompt=''
+  prompt="$(get_prompt_from_clipboard)"
+
+  local -a curl_args=(
+    --silent
+    --show-error
+    --fail
+    --connect-timeout "$server_connect_timeout"
+    --max-time "$server_max_time"
+    --output "$response_path"
+    --request POST
+    --form-string 'temperature=0'
+    --form-string 'temperature_inc=0.9'
+    --form "file=@${wav_path}"
+    --form-string 'response_format=json'
+  )
+  if [ "$prompt" != '' ]; then
+    curl_args+=(--form-string "prompt=$prompt")
+  fi
+
+  if ! curl "${curl_args[@]}" "$server_url"; then
     rm -f "$wav_path" "$response_path"
     fail 'transcription error'
   fi
@@ -176,7 +192,7 @@ start_recording() {
   fi
 
   # clear noise
-  transcript="$(printf '%s' "$transcript" | tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//')"
+  transcript="$(printf '%s' "$transcript" | clean_text)"
   if ! printf '%s' "$transcript" | wl-copy; then
     fail 'copy failed'
   fi
