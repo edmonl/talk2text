@@ -96,7 +96,10 @@ clean_text() {
 }
 
 get_prompt_from_clipboard() {
-  wl-paste --primary --no-newline 2>/dev/null | clean_text
+  # No primary selection is normal; wl-paste exits non-zero in that case.
+  local prompt=''
+  prompt="$(wl-paste --primary --no-newline 2>/dev/null || true)"
+  printf '%s' "$prompt" | clean_text
 }
 
 start_recording() {
