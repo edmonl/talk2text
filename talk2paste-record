@@ -196,7 +196,7 @@ start_recording() {
 
   # clear noise
   transcript="$(printf '%s' "$transcript" | clean_text)"
-  if ! printf '%s' "$transcript" | wl-copy; then
+  if ! printf '%s ' "$transcript" | wl-copy; then
     fail 'copy failed'
   fi
 
