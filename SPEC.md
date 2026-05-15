@@ -10,8 +10,9 @@ While the key is held, audio is recorded with `ffmpeg`. When the key is released
 ### Temp Directory
 Runtime files are stored under:
 
-- `$TMPDIR/talk2text` when `TMPDIR` exists and is writable
-- otherwise `/tmp/talk2text`
+- `$XDG_RUNTIME_DIR/talk2text` when `XDG_RUNTIME_DIR` is a existing directory
+- otherwise `$TMPDIR/run-<uid>/talk2text` when `TMPDIR` is a existing directory
+- otherwise `/tmp/run-<uid>/talk2text`
 
 ### Per-Clip Files
 Each recording gets a unique clip ID based on the current timestamp plus a short random suffix. A clip may create:

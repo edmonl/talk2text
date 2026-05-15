@@ -12,10 +12,15 @@ readonly server_max_time="${TALK2TEXT_SERVER_MAX_TIME:-10}"
 readonly preview_length="${TALK2TEXT_NOTIFY_PREVIEW_LENGTH:-80}"
 
 temp_dir='/tmp'
-if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
-  temp_dir="$TMPDIR"
+if [ -d "${XDG_RUNTIME_DIR:-}" ]; then
+  temp_dir="$XDG_RUNTIME_DIR"
+else
+  if [ -d "${TMPDIR:-}" ]; then
+    temp_dir="$TMPDIR"
+  fi
+  temp_dir="$temp_dir/run-$(id -u)"
 fi
-temp_dir="$temp_dir/talk2text"
+temp_dir="${temp_dir%/}/talk2text"
 readonly temp_dir
 
 notify() {

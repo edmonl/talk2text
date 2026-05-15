@@ -8,10 +8,15 @@ readonly recorder_sample_rate="${TALK2TEXT_RECORD_SAMPLE_RATE:-16000}"
 readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-2s}"
 
 temp_dir='/tmp'
-if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
-  temp_dir="$TMPDIR"
+if [ -d "${XDG_RUNTIME_DIR:-}" ]; then
+  temp_dir="$XDG_RUNTIME_DIR"
+else
+  if [ -d "${TMPDIR:-}" ]; then
+    temp_dir="$TMPDIR"
+  fi
+  temp_dir="$temp_dir/run-$(id -u)"
 fi
-temp_dir="$temp_dir/talk2text"
+temp_dir="${temp_dir%/}/talk2text"
 readonly temp_dir
 readonly cmd_prefix="ffmpeg -nostdin -hide_banner -loglevel error -f $default_input_format -i $default_input_device -ac $recorder_channels -ar $recorder_sample_rate -c:a pcm_s16le $temp_dir"
 
@@ -32,6 +37,10 @@ stop() {
   local pids=()
   for pid_path in "$temp_dir"/*.pid; do
     clip_id="$(basename "$pid_path" .pid)"
+    if [ "$clip_id" = '*' ]; then
+      continue
+    fi
+
     pid="$(cat "$pid_path" 2>/dev/null || true)"
     rm -f "$pid_path"
     if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
