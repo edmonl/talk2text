@@ -1,4 +1,4 @@
-# talk2paste
+# talk2text
 
 ## Goal
 A minimal push-to-talk speech-to-text tool for Sway on Debian Linux.
@@ -10,8 +10,8 @@ While the key is held, audio is recorded with `ffmpeg`. When the key is released
 ### Temp Directory
 Runtime files are stored under:
 
-- `$TMPDIR/talk2paste` when `TMPDIR` exists and is writable
-- otherwise `/tmp/talk2paste`
+- `$TMPDIR/talk2text` when `TMPDIR` exists and is writable
+- otherwise `/tmp/talk2text`
 
 ### Per-Clip Files
 Each recording gets a unique clip ID based on the current timestamp plus a short random suffix. A clip may create:
@@ -22,7 +22,7 @@ Each recording gets a unique clip ID based on the current timestamp plus a short
 - `<clip_id>.response.json`
 
 ### Recorder
-`talk2paste-record` starts a detached worker that:
+`talk2text-record` starts a detached worker that:
 
 - records mono 16 kHz WAV audio with `ffmpeg`
 - writes the `ffmpeg` PID to `<clip_id>.pid`
@@ -36,7 +36,7 @@ Each recording gets a unique clip ID based on the current timestamp plus a short
 - shows notifications for recording, transcription, success, and failures
 
 ### Release Handler
-`talk2paste-stop` scans `*.pid` files, confirms each PID still belongs to the expected `ffmpeg` command for that clip, removes the pid file, and stops the process with escalating signals if needed.
+`talk2text-stop` scans `*.pid` files, confirms each PID still belongs to the expected `ffmpeg` command for that clip, removes the pid file, and stops the process with escalating signals if needed.
 
 ## Ordering Rule
 The newest clip wins.

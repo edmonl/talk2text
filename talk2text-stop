@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pulse}"
-readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
-readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
-readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
-readonly stop_timeout="${TALK2PASTE_RECORD_STOP_TIMEOUT:-2s}"
+readonly default_input_format="${TALK2TEXT_RECORD_INPUT_FORMAT:-pulse}"
+readonly default_input_device="${TALK2TEXT_RECORD_INPUT_DEVICE:-default}"
+readonly recorder_channels="${TALK2TEXT_RECORD_CHANNELS:-1}"
+readonly recorder_sample_rate="${TALK2TEXT_RECORD_SAMPLE_RATE:-16000}"
+readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-2s}"
 
 temp_dir='/tmp'
 if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
   temp_dir="$TMPDIR"
 fi
-temp_dir="$temp_dir/talk2paste"
+temp_dir="$temp_dir/talk2text"
 readonly temp_dir
 readonly cmd_prefix="ffmpeg -nostdin -hide_banner -loglevel error -f $default_input_format -i $default_input_device -ac $recorder_channels -ar $recorder_sample_rate -c:a pcm_s16le $temp_dir"
 
@@ -77,14 +77,14 @@ stop() {
 
 usage() {
   cat <<'EOF' >&2
-usage: talk2paste-stop
+usage: talk2text-stop
 
 Environment:
-  TALK2PASTE_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
-  TALK2PASTE_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
-  TALK2PASTE_RECORD_CHANNELS          recorder channel count (default: 1)
-  TALK2PASTE_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
-  TALK2PASTE_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 2s)
+  TALK2TEXT_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
+  TALK2TEXT_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
+  TALK2TEXT_RECORD_CHANNELS          recorder channel count (default: 1)
+  TALK2TEXT_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
+  TALK2TEXT_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 2s)
 EOF
 }
 

@@ -19,10 +19,10 @@ fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly script_dir
-readonly record_script_source="$script_dir/talk2paste-record"
-readonly stop_script_source="$script_dir/talk2paste-stop"
-readonly record_script_target="$bin_dir/talk2paste-record"
-readonly stop_script_target="$bin_dir/talk2paste-stop"
+readonly record_script_source="$script_dir/talk2text-record"
+readonly stop_script_source="$script_dir/talk2text-stop"
+readonly record_script_target="$bin_dir/talk2text-record"
+readonly stop_script_target="$bin_dir/talk2text-stop"
 readonly whisper_repo_build_dir="$whisper_repo_dir/build"
 readonly whisper_repo_model_dir="$whisper_repo_dir/models"
 readonly whisper_repo_server_bin="$whisper_repo_build_dir/bin/whisper-server"
@@ -169,6 +169,6 @@ Example checks:
   journalctl --user -u ${whisper_systemd_service_name}
 
 Example Sway config:
-  bindsym --no-repeat F12 exec ${bin_dir}/talk2paste-record
-  bindsym --release F12 exec ${bin_dir}/talk2paste-stop
+  bindsym --no-repeat F12 exec ${bin_dir}/talk2text-record
+  bindsym --release F12 exec ${bin_dir}/talk2text-stop
 EOF

@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly default_input_format="${TALK2PASTE_RECORD_INPUT_FORMAT:-pulse}"
-readonly default_input_device="${TALK2PASTE_RECORD_INPUT_DEVICE:-default}"
-readonly recorder_channels="${TALK2PASTE_RECORD_CHANNELS:-1}"
-readonly recorder_sample_rate="${TALK2PASTE_RECORD_SAMPLE_RATE:-16000}"
-readonly min_duration_seconds="${TALK2PASTE_MIN_DURATION_SECONDS:-0.5}"
-readonly server_url="${TALK2PASTE_SERVER_URL:-http://127.0.0.1:9898/inference}"
-readonly server_connect_timeout="${TALK2PASTE_SERVER_CONNECT_TIMEOUT:-1}"
-readonly server_max_time="${TALK2PASTE_SERVER_MAX_TIME:-10}"
-readonly preview_length="${TALK2PASTE_NOTIFY_PREVIEW_LENGTH:-80}"
+readonly default_input_format="${TALK2TEXT_RECORD_INPUT_FORMAT:-pulse}"
+readonly default_input_device="${TALK2TEXT_RECORD_INPUT_DEVICE:-default}"
+readonly recorder_channels="${TALK2TEXT_RECORD_CHANNELS:-1}"
+readonly recorder_sample_rate="${TALK2TEXT_RECORD_SAMPLE_RATE:-16000}"
+readonly min_duration_seconds="${TALK2TEXT_MIN_DURATION_SECONDS:-0.5}"
+readonly server_url="${TALK2TEXT_SERVER_URL:-http://127.0.0.1:9898/inference}"
+readonly server_connect_timeout="${TALK2TEXT_SERVER_CONNECT_TIMEOUT:-1}"
+readonly server_max_time="${TALK2TEXT_SERVER_MAX_TIME:-10}"
+readonly preview_length="${TALK2TEXT_NOTIFY_PREVIEW_LENGTH:-80}"
 
 temp_dir='/tmp'
 if [ "${TMPDIR:-}" != "" ] && [ -d "$TMPDIR" ] && [ -w "$TMPDIR" ]; then
   temp_dir="$TMPDIR"
 fi
-temp_dir="$temp_dir/talk2paste"
+temp_dir="$temp_dir/talk2text"
 readonly temp_dir
 
 notify() {
-  notify-send -t 5000 'talk2paste' "$1" >/dev/null 2>&1 || true
+  notify-send -t 5000 'talk2text' "$1" >/dev/null 2>&1 || true
 }
 
 fail() {
@@ -92,7 +92,7 @@ validate_wav() {
 }
 
 clean_text() {
-  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//'
+  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//; s/\([[:alnum:]]\)$/\1./; s/\([.,!?:;"'\''`]\)$/\1 /'
 }
 
 get_prompt_from_clipboard() {
@@ -209,18 +209,18 @@ start_recording() {
 
 usage() {
   cat <<'EOF' >&2
-usage: talk2paste-record
+usage: talk2text-record
 
 Environment:
-  TALK2PASTE_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
-  TALK2PASTE_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
-  TALK2PASTE_RECORD_CHANNELS          recorder channel count (default: 1)
-  TALK2PASTE_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
-  TALK2PASTE_MIN_DURATION_SECONDS     minimum accepted duration (default: 0.5)
-  TALK2PASTE_SERVER_URL               whisper-server URL (default: http://127.0.0.1:9898/inference)
-  TALK2PASTE_SERVER_CONNECT_TIMEOUT   curl connect timeout seconds (default: 1)
-  TALK2PASTE_SERVER_MAX_TIME          curl total timeout seconds (default: 10)
-  TALK2PASTE_NOTIFY_PREVIEW_LENGTH    notification preview length (default: 80)
+  TALK2TEXT_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
+  TALK2TEXT_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
+  TALK2TEXT_RECORD_CHANNELS          recorder channel count (default: 1)
+  TALK2TEXT_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
+  TALK2TEXT_MIN_DURATION_SECONDS     minimum accepted duration (default: 0.5)
+  TALK2TEXT_SERVER_URL               whisper-server URL (default: http://127.0.0.1:9898/inference)
+  TALK2TEXT_SERVER_CONNECT_TIMEOUT   curl connect timeout seconds (default: 1)
+  TALK2TEXT_SERVER_MAX_TIME          curl total timeout seconds (default: 10)
+  TALK2TEXT_NOTIFY_PREVIEW_LENGTH    notification preview length (default: 80)
 EOF
 }
 
