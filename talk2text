@@ -10,7 +10,6 @@ readonly max_duration_seconds="${TALK2TEXT_MAX_DURATION_SECONDS:-100}"
 readonly server_url="${TALK2TEXT_SERVER_URL:-http://127.0.0.1:9898/inference}"
 readonly server_connect_timeout="${TALK2TEXT_SERVER_CONNECT_TIMEOUT:-1}"
 readonly server_max_time="${TALK2TEXT_SERVER_MAX_TIME:-10}"
-readonly preview_length="${TALK2TEXT_NOTIFY_PREVIEW_LENGTH:-80}"
 readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-2s}"
 
 temp_dir='/tmp'
@@ -109,15 +108,17 @@ validate_wav() {
   return 0
 }
 
-clean_text() {
-  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//; s/\([[:alnum:]]\)$/\1./; s/\([.,!?:;"'\''`]\)$/\1 /'
+clean_whitespace() {
+  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//'
 }
 
-get_prompt_from_clipboard() {
-  # No primary selection is normal; wl-paste exits non-zero in that case.
+get_prompt_from_context() {
+  local context_file="${temp_dir}/transcription-context"
   local prompt=''
-  prompt="$(wl-paste --primary --no-newline 2>/dev/null || true)"
-  printf '%s' "$prompt" | clean_text
+  if [ -f "$context_file" ]; then
+    prompt="$(cat "$context_file" || true)"
+  fi
+  printf '%s' "$prompt" | clean_whitespace
 }
 
 start_recording() {
@@ -173,7 +174,7 @@ start_recording() {
 
   local response_path="${temp_dir}/${clip_id}.response.json"
   local prompt=''
-  prompt="$(get_prompt_from_clipboard)"
+  prompt="$(get_prompt_from_context)"
 
   local -a curl_args=(
     --silent
@@ -207,16 +208,8 @@ start_recording() {
   fi
 
   # clear noise
-  transcript="$(printf '%s' "$transcript" | clean_text)"
-  if ! printf '%s ' "$transcript" | wl-copy; then
-    fail 'copy failed'
-  fi
-
-  if [ "${#transcript}" -gt "$((preview_length - 3))" ]; then
-    transcript="${transcript:0:preview_length}..."
-  fi
-
-  notify "Ready: ${transcript}"
+  transcript="$(printf '%s' "$transcript" | clean_whitespace)"
+  printf '%s ' "$transcript" >> "$temp_dir/transcript"
 }
 
 pid_matches_known_prefix() {
@@ -301,7 +294,6 @@ Environment:
   TALK2TEXT_SERVER_URL               whisper-server URL (default: http://127.0.0.1:9898/inference)
   TALK2TEXT_SERVER_CONNECT_TIMEOUT   curl connect timeout seconds (default: 1)
   TALK2TEXT_SERVER_MAX_TIME          curl total timeout seconds (default: 10)
-  TALK2TEXT_NOTIFY_PREVIEW_LENGTH    notification preview length (default: 80)
   TALK2TEXT_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 2s)
 EOF
 }
