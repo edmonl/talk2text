@@ -114,11 +114,8 @@ clean_whitespace() {
 
 get_prompt_from_context() {
   local context_file="${temp_dir}/transcription-context"
-  local prompt=''
-  if [ -f "$context_file" ]; then
-    prompt="$(cat "$context_file" || true)"
-  fi
-  printf '%s' "$prompt" | clean_whitespace
+  touch "$context_file"
+  cat "$context_file" | clean_whitespace || true
 }
 
 start_recording() {
@@ -201,14 +198,12 @@ start_recording() {
   rm -f "$wav_path"
 
   local transcript
-  transcript="$(jq -r '.text // empty' <"$response_path" || true)"
+  transcript="$(jq -r '.text // empty' <"$response_path" | clean_whitespace || true)"
   rm -f "$response_path"
   if [ "$transcript" = "" ]; then
     fail 'no transcript'
   fi
 
-  # clear noise
-  transcript="$(printf '%s' "$transcript" | clean_whitespace)"
   printf '%s ' "$transcript" >> "$temp_dir/transcript"
 }
 
