@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly default_input_format="${TALK2TEXT_RECORD_INPUT_FORMAT:-pulse}"
+readonly default_input_device="${TALK2TEXT_RECORD_INPUT_DEVICE:-default}"
+readonly recorder_channels="${TALK2TEXT_RECORD_CHANNELS:-1}"
+readonly recorder_sample_rate="${TALK2TEXT_RECORD_SAMPLE_RATE:-16000}"
+readonly min_duration_seconds="${TALK2TEXT_MIN_DURATION_SECONDS:-0.5}"
+readonly max_duration_seconds="${TALK2TEXT_MAX_DURATION_SECONDS:-100}"
+readonly server_url="${TALK2TEXT_SERVER_URL:-http://127.0.0.1:9898/inference}"
+readonly server_connect_timeout="${TALK2TEXT_SERVER_CONNECT_TIMEOUT:-1}"
+readonly server_max_time="${TALK2TEXT_SERVER_MAX_TIME:-10}"
+readonly preview_length="${TALK2TEXT_NOTIFY_PREVIEW_LENGTH:-80}"
+readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-2s}"
+
+temp_dir='/tmp'
+if [ -d "${XDG_RUNTIME_DIR:-}" ]; then
+  temp_dir="$XDG_RUNTIME_DIR"
+else
+  if [ -d "${TMPDIR:-}" ]; then
+    temp_dir="$TMPDIR"
+  fi
+  temp_dir="$temp_dir/run-$(id -u)"
+fi
+temp_dir="${temp_dir%/}/talk2text"
+readonly temp_dir
+
+readonly ffmpeg_cmd=(
+  ffmpeg -nostdin -hide_banner -loglevel error
+  -f "$default_input_format"
+  -i "$default_input_device"
+  -ac "$recorder_channels"
+  -ar "$recorder_sample_rate"
+  -c:a pcm_s16le
+  -t: "$max_duration_seconds"
+)
+readonly cmd_prefix="${ffmpeg_cmd[*]} $temp_dir"
+
+notify() {
+  notify-send -t 5000 'talk2text' "$1" >/dev/null 2>&1 || true
+}
+
+fail() {
+  notify "Something didn't work as expected: $*"
+  exit 1
+}
+
+new_clip_id() {
+  printf '%s-%s\n' \
+    "$(date '+%Y%m%dT%H%M%S.%N')" \
+    "$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+}
+
+is_newest_clip() {
+  local clip_id="$1"
+  local wav_path
+  local wav_clip_id
+
+  shopt -s nullglob
+  for wav_path in "$temp_dir"/*.wav; do
+    wav_clip_id="$(basename "$wav_path" .wav)"
+    if [[ "$wav_clip_id" > "$clip_id" ]]; then
+      shopt -u nullglob
+      return 1
+    fi
+  done
+
+  shopt -u nullglob
+  return 0
+}
+
+get_ms() {
+  local duration="$1"
+  local duration_seconds="${duration%%.*}"
+  local duration_fraction="${duration#*.}"
+  if [ "$duration_fraction" = "$duration" ]; then
+    duration_fraction='000'
+  fi
+  duration_fraction="${duration_fraction}000"
+  duration_fraction="${duration_fraction:0:3}"
+  printf '%s' "$duration_seconds$duration_fraction"
+}
+
+validate_wav() {
+  local wav_path="$1"
+  # wav_path must exist here
+
+  local duration
+  duration="$(
+    ffprobe \
+      -v error \
+      -show_entries format=duration \
+      -of default=noprint_wrappers=1:nokey=1 \
+      "$wav_path" || true
+  )"
+  if [ "$duration" = "" ]; then
+    return 1
+  fi
+
+  local duration_ms
+  duration_ms="$(get_ms "$duration")"
+
+  local minimum_ms
+  minimum_ms="$(get_ms "$min_duration_seconds")"
+  if [ "$duration_ms" -lt "$minimum_ms" ]; then
+    return 2
+  fi
+
+  return 0
+}
+
+clean_text() {
+  tr '\n\r' ' ' | sed 's/[[:space:][:cntrl:]]\+/ /g; s/^ //; s/ $//; s/\([[:alnum:]]\)$/\1./; s/\([.,!?:;"'\''`]\)$/\1 /'
+}
+
+get_prompt_from_clipboard() {
+  # No primary selection is normal; wl-paste exits non-zero in that case.
+  local prompt=''
+  prompt="$(wl-paste --primary --no-newline 2>/dev/null || true)"
+  printf '%s' "$prompt" | clean_text
+}
+
+start_recording() {
+  local clip_id
+  clip_id="$(new_clip_id)"
+  mkdir -p "$temp_dir"
+
+  local wav_path="${temp_dir}/${clip_id}.wav"
+  local ffmpeg_log_path="${temp_dir}/${clip_id}.ffmpeg.log"
+
+  "${ffmpeg_cmd[@]}" \
+    "$wav_path" >"$ffmpeg_log_path" 2>&1 &
+  local ffmpeg_pid="$!"
+  local pid_path="${temp_dir}/${clip_id}.pid"
+  printf '%s\n' "$ffmpeg_pid" >"$pid_path"
+  notify 'Recording...'
+
+  local ffmpeg_status=0
+  wait "$ffmpeg_pid" || ffmpeg_status="$?"
+  if [ -e "$pid_path" ]; then
+    rm -f "$pid_path"
+    if [ "$ffmpeg_status" -ne 0 ]; then
+      # leave ffmpeg log for investigation
+      rm -f "$wav_path"
+      fail 'ffmpeg error'
+    fi
+  fi
+
+  # now we know it's success, no need to leave the log behind
+  rm -f "$ffmpeg_log_path"
+
+  if ! is_newest_clip "$clip_id"; then
+    rm -f "$wav_path"
+    exit 0
+  fi
+
+  local validate_status=0
+  validate_wav "$wav_path" || validate_status="$?"
+  if [ "$validate_status" -ne 0 ]; then
+    if [ "$validate_status" -eq 2 ]; then
+      rm -f "$wav_path"
+      exit 0
+    fi
+    fail "invalid wav $wav_path"
+  fi
+
+  notify 'Transcribing...'
+
+  if ! is_newest_clip "$clip_id"; then
+    rm -f "$wav_path"
+    exit 0
+  fi
+
+  local response_path="${temp_dir}/${clip_id}.response.json"
+  local prompt=''
+  prompt="$(get_prompt_from_clipboard)"
+
+  local -a curl_args=(
+    --silent
+    --show-error
+    --fail
+    --connect-timeout "$server_connect_timeout"
+    --max-time "$server_max_time"
+    --output "$response_path"
+    --request POST
+    --form-string 'temperature=0'
+    --form-string 'temperature_inc=0.9'
+    --form "file=@${wav_path}"
+    --form-string 'response_format=json'
+  )
+  if [ "$prompt" != '' ]; then
+    curl_args+=(--form-string "prompt=$prompt")
+  fi
+
+  if ! curl "${curl_args[@]}" "$server_url"; then
+    rm -f "$wav_path" "$response_path"
+    fail 'transcription error'
+  fi
+
+  rm -f "$wav_path"
+
+  local transcript
+  transcript="$(jq -r '.text // empty' <"$response_path" || true)"
+  rm -f "$response_path"
+  if [ "$transcript" = "" ]; then
+    fail 'no transcript'
+  fi
+
+  # clear noise
+  transcript="$(printf '%s' "$transcript" | clean_text)"
+  if ! printf '%s ' "$transcript" | wl-copy; then
+    fail 'copy failed'
+  fi
+
+  if [ "${#transcript}" -gt "$((preview_length - 3))" ]; then
+    transcript="${transcript:0:preview_length}..."
+  fi
+
+  notify "Ready: ${transcript}"
+}
+
+pid_matches_known_prefix() {
+  local pid="$1"
+  local clip_id="$2"
+  local cmdline
+  cmdline="$(tr '\0' ' ' <"/proc/${pid}/cmdline" || true)"
+  [ "${cmdline% }" = "$cmd_prefix/$clip_id.wav" ]
+}
+
+stop() {
+  local pid_path
+  local clip_id
+  local pid
+
+  shopt -s nullglob
+  local pids=()
+  for pid_path in "$temp_dir"/*.pid; do
+    clip_id="$(basename "$pid_path" .pid)"
+    if [ "$clip_id" = '*' ]; then
+      continue
+    fi
+
+    pid="$(cat "$pid_path" 2>/dev/null || true)"
+    rm -f "$pid_path"
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+
+    if ! kill -0 "$pid"; then
+      continue
+    fi
+
+    if ! pid_matches_known_prefix "$pid" "$clip_id"; then
+      continue
+    fi
+    kill -INT "$pid" || true
+    pids+=("$pid")
+  done
+  shopt -u nullglob
+
+  if [ "${#pids[@]}" -eq 0 ]; then
+    return
+  fi
+
+  sleep "$stop_timeout"
+  local remaining_pids=()
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid"; then
+      kill -TERM "$pid" || true
+      remaining_pids+=("$pid")
+    fi
+  done
+
+  if [ "${#remaining_pids[@]}" -eq 0 ]; then
+    return
+  fi
+
+  sleep "$stop_timeout"
+  for pid in "${remaining_pids[@]}"; do
+    if kill -0 "$pid"; then
+      kill -KILL "$pid" || true
+    fi
+  done
+}
+
+usage() {
+  cat <<'EOF' >&2
+usage: talk2text <command>
+
+Commands:
+  record    Start recording
+  stop      Stop recording
+
+Environment:
+  TALK2TEXT_RECORD_INPUT_FORMAT      ffmpeg input format (default: pulse)
+  TALK2TEXT_RECORD_INPUT_DEVICE      ffmpeg input device (default: default)
+  TALK2TEXT_RECORD_CHANNELS          recorder channel count (default: 1)
+  TALK2TEXT_RECORD_SAMPLE_RATE       recorder sample rate (default: 16000)
+  TALK2TEXT_MIN_DURATION_SECONDS     minimum accepted duration (default: 0.5)
+  TALK2TEXT_MAX_DURATION_SECONDS     maximum recording duration in seconds (default: 100)
+  TALK2TEXT_SERVER_URL               whisper-server URL (default: http://127.0.0.1:9898/inference)
+  TALK2TEXT_SERVER_CONNECT_TIMEOUT   curl connect timeout seconds (default: 1)
+  TALK2TEXT_SERVER_MAX_TIME          curl total timeout seconds (default: 10)
+  TALK2TEXT_NOTIFY_PREVIEW_LENGTH    notification preview length (default: 80)
+  TALK2TEXT_RECORD_STOP_TIMEOUT      stop timeout between signal escalation steps (default: 2s)
+EOF
+}
+
+main() {
+  if [ "$#" -ne 1 ]; then
+    usage
+    exit 1
+  fi
+
+  case "$1" in
+  record)
+    start_recording >/dev/null 2>&1 &
+    ;;
+  stop)
+    stop >/dev/null 2>&1
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+  esac
+}
+
+main "$@"

@@ -19,10 +19,8 @@ fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly script_dir
-readonly record_script_source="$script_dir/talk2text-record"
-readonly stop_script_source="$script_dir/talk2text-stop"
-readonly record_script_target="$bin_dir/talk2text-record"
-readonly stop_script_target="$bin_dir/talk2text-stop"
+readonly script_source="$script_dir/talk2text"
+readonly script_target="$bin_dir/talk2text"
 readonly whisper_repo_build_dir="$whisper_repo_dir/build"
 readonly whisper_repo_model_dir="$whisper_repo_dir/models"
 readonly whisper_repo_server_bin="$whisper_repo_build_dir/bin/whisper-server"
@@ -45,9 +43,8 @@ need_cmd() {
 need_cmd systemctl
 
 if [ "$action" = '--uninstall' ]; then
-  rm -f "$record_script_target"
-  rm -f "$stop_script_target"
-  echo "Removed whisper runtime scripts: $record_script_target, $stop_script_target"
+  rm -f "$script_target"
+  echo "Removed main script: $script_target"
 
   if [ -x "$whisper_server_bin" ]; then
     systemctl --user disable --now "$whisper_systemd_service_name" >/dev/null || true
@@ -159,8 +156,7 @@ else
 fi
 
 mkdir -p "$bin_dir"
-cp "$record_script_source" "$record_script_target"
-cp "$stop_script_source" "$stop_script_target"
+cp "$script_source" "$script_target"
 cat <<'EOF'
 Install complete.
 
@@ -169,6 +165,6 @@ Example checks:
   journalctl --user -u ${whisper_systemd_service_name}
 
 Example Sway config:
-  bindsym --no-repeat F12 exec ${bin_dir}/talk2text-record
-  bindsym --release F12 exec ${bin_dir}/talk2text-stop
+  bindsym --no-repeat F12 exec ${bin_dir}/talk2text record
+  bindsym --release F12 exec ${bin_dir}/talk2text stop
 EOF
