@@ -21,6 +21,8 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 readonly script_dir
 readonly script_source="$script_dir/talk2text"
 readonly script_target="$bin_dir/talk2text"
+readonly editor_script_source="$script_dir/talk2text-sway-editor"
+readonly editor_script_target="$bin_dir/talk2text-sway-editor"
 readonly whisper_repo_build_dir="$whisper_repo_dir/build"
 readonly whisper_repo_model_dir="$whisper_repo_dir/models"
 readonly whisper_repo_server_bin="$whisper_repo_build_dir/bin/whisper-server"
@@ -45,6 +47,8 @@ need_cmd systemctl
 if [ "$action" = '--uninstall' ]; then
   rm -f "$script_target"
   echo "Removed main script: $script_target"
+  rm -f "$editor_script_target"
+  echo "Removed editor script: $editor_script_target"
 
   if [ -x "$whisper_server_bin" ]; then
     systemctl --user disable --now "$whisper_systemd_service_name" >/dev/null || true
@@ -157,6 +161,7 @@ fi
 
 mkdir -p "$bin_dir"
 cp "$script_source" "$script_target"
+cp "$editor_script_source" "$editor_script_target"
 cat <<'EOF'
 Install complete.
 
@@ -165,6 +170,6 @@ Example checks:
   journalctl --user -u ${whisper_systemd_service_name}
 
 Example Sway config:
-  bindsym --no-repeat F12 exec ${bin_dir}/talk2text record
-  bindsym --release F12 exec ${bin_dir}/talk2text stop
+  bindsym --no-repeat F12 exec $script_target record $editor_script_target
+  bindsym --release F12 exec $script_target stop
 EOF

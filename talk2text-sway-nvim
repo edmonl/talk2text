@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+# Check if the talk2text-editor is already running
+if [ "$(swaymsg -t get_tree | jq '[.. | objects | select(.app_id == "talk2text-editor")] | length')" -gt 0 ]; then
+  swaymsg '[app_id="talk2text-editor"] scratchpad show'
+  exit 0
+fi
+
+context_file="$1"
+transcript_file="$2"
+work_dir="$(dirname "$2")"
+
+# Ensure the window rules are in place before launching
+swaymsg 'for_window [app_id="talk2text-editor"] floating enable'
+
+swaymsg "exec alacritty --class talk2text-editor --title talk2text --work-directory '$work_dir' --command nvim -o '$context_file' '$transcript_file' -c 'lua vim.api.nvim_win_set_height(0, math.floor(vim.o.lines / 3))' -c 'nnoremap qq :wa<CR>:execute 'buffer' argv(1)<CR>:%y+<CR>:qa!<CR>'"
