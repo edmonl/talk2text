@@ -39,9 +39,8 @@ notify() {
   notify-send -t 5000 'talk2text' "$1" >/dev/null 2>&1 || true
 }
 
-fail() {
+notify_error() {
   notify "Something didn't work as expected: $*"
-  exit 1
 }
 
 new_clip_id() {
@@ -50,24 +49,10 @@ new_clip_id() {
     "$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 }
 
-is_newest_clip() {
-  local clip_id="$1"
-  local wav_path
-  local wav_clip_id
-
-  shopt -s nullglob
-  for wav_path in "$temp_dir"/*.wav; do
-    wav_clip_id="$(basename "$wav_path" .wav)"
-    if [[ "$wav_clip_id" > "$clip_id" ]]; then
-      shopt -u nullglob
-      return 1
-    fi
-  done
-
-  shopt -u nullglob
-  return 0
-}
-
+# Bash only natively supports integer arithmetic.
+# ffprobe duration and environment variables often use fractional seconds (e.g., "1.5").
+# get_ms normalizes these fractional seconds into integer milliseconds
+# so we can use standard bash integer comparison operators (like -lt).
 get_ms() {
   local duration="$1"
   local duration_seconds="${duration%%.*}"
@@ -126,30 +111,43 @@ start_recording() {
   local wav_path="${temp_dir}/${clip_id}.wav"
   local ffmpeg_log_path="${temp_dir}/${clip_id}.ffmpeg.log"
 
+  local start_time_ms
+  start_time_ms="$(date +%s%3N)"
+
   "${ffmpeg_cmd[@]}" \
     "$wav_path" >"$ffmpeg_log_path" 2>&1 &
   local ffmpeg_pid="$!"
   local pid_path="${temp_dir}/${clip_id}.pid"
   printf '%s\n' "$ffmpeg_pid" >"$pid_path"
+  # todo: delay this only after passing min duration
   notify 'Recording...'
 
   local ffmpeg_status=0
   wait "$ffmpeg_pid" || ffmpeg_status="$?"
+
+  local end_time_ms
+  end_time_ms="$(date +%s%3N)"
+  local run_time_ms="$((end_time_ms - start_time_ms))"
+
   if [ -e "$pid_path" ]; then
     rm -f "$pid_path"
     if [ "$ffmpeg_status" -ne 0 ]; then
       # leave ffmpeg log for investigation
       rm -f "$wav_path"
-      fail 'ffmpeg error'
+      notify_error 'ffmpeg error'
+      return 1
     fi
   fi
 
   # now we know it's success, no need to leave the log behind
   rm -f "$ffmpeg_log_path"
 
-  if ! is_newest_clip "$clip_id"; then
+  # check this after handling ffmpeg log file
+  local minimum_ms
+  minimum_ms="$(get_ms "$min_duration_seconds")"
+  if [ "$run_time_ms" -lt "$minimum_ms" ]; then
     rm -f "$wav_path"
-    exit 0
+    return 0
   fi
 
   local validate_status=0
@@ -157,17 +155,13 @@ start_recording() {
   if [ "$validate_status" -ne 0 ]; then
     if [ "$validate_status" -eq 2 ]; then
       rm -f "$wav_path"
-      exit 0
+      return 0
     fi
-    fail "invalid wav $wav_path"
+    notify_error "invalid wav $wav_path"
+    return 254
   fi
 
   notify 'Transcribing...'
-
-  if ! is_newest_clip "$clip_id"; then
-    rm -f "$wav_path"
-    exit 0
-  fi
 
   local response_path="${temp_dir}/${clip_id}.response.json"
   local prompt=''
@@ -192,7 +186,8 @@ start_recording() {
 
   if ! curl "${curl_args[@]}" "$server_url"; then
     rm -f "$wav_path" "$response_path"
-    fail 'transcription error'
+    notify_error 'transcription error'
+    return 254
   fi
 
   rm -f "$wav_path"
@@ -201,14 +196,11 @@ start_recording() {
   transcript="$(jq -r '.text // empty' <"$response_path" | clean_whitespace || true)"
   rm -f "$response_path"
   if [ "$transcript" = "" ]; then
-    fail 'no transcript'
+    notify '(blank transcript)'
+    return 255
   fi
 
   printf '%s ' "$transcript" >> "$temp_dir/transcript"
-
-  if [ "$#" -gt 0 ]; then
-    "$@" "${temp_dir}/transcription-context" "${temp_dir}/transcript"
-  fi
 }
 
 pid_matches_known_prefix() {
@@ -297,6 +289,20 @@ Environment:
 EOF
 }
 
+start() {
+  local exit_code=0
+  start_recording || exit_code="$?"
+
+  if [ "$exit_code" -lt 128 ]; then
+    if [ "$#" -gt 0 ]; then
+      exec "$@" "${temp_dir}/transcription-context" "${temp_dir}/transcript"
+    fi
+    exit "$exit_code"
+  else
+    exit "$((255 - exit_code))"
+  fi
+}
+
 main() {
   if [ "$#" -eq 0 ]; then
     usage
@@ -308,7 +314,10 @@ main() {
 
   case "$cmd" in
   record)
-    start_recording "$@" >/dev/null 2>&1 &
+    # Run the recording workflow in the background so the CLI command returns immediately.
+    # Otherwise, the caller (like a keyboard shortcut) would hang and block until the
+    # recording finishes or is stopped by another process.
+    start "$@" >/dev/null 2>&1 &
     ;;
   stop)
     if [ "$#" -ne 0 ]; then
