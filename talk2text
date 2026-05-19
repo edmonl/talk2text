@@ -120,8 +120,15 @@ start_recording() {
   local ffmpeg_pid="$!"
   local pid_path="${temp_dir}/${clip_id}.pid"
   printf '%s\n' "$ffmpeg_pid" >"$pid_path"
-  # todo: delay this only after passing min duration
-  notify 'Recording...'
+  
+  # Delay the "Recording..." notification so that quick taps
+  # (shorter than min_duration_seconds) don't spam the user.
+  (
+    sleep "$min_duration_seconds"
+    if kill -0 "$ffmpeg_pid" 2>/dev/null; then
+      notify 'Recording...'
+    fi
+  ) &
 
   local ffmpeg_status=0
   wait "$ffmpeg_pid" || ffmpeg_status="$?"
