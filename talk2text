@@ -104,13 +104,14 @@ get_prompt_from_context() {
 }
 
 start_recording() {
+  # prepare
   local clip_id
   clip_id="$(new_clip_id)"
   mkdir -p "$temp_dir"
 
+  # call ffmpeg
   local wav_path="${temp_dir}/${clip_id}.wav"
   local ffmpeg_log_path="${temp_dir}/${clip_id}.ffmpeg.log"
-
   local start_time_ms
   start_time_ms="$(date +%s%3N)"
 
@@ -129,20 +130,21 @@ start_recording() {
   end_time_ms="$(date +%s%3N)"
   local run_time_ms="$((end_time_ms - start_time_ms))"
 
+  # check ffmpeg status
   if [ -e "$pid_path" ]; then
     rm -f "$pid_path"
     if [ "$ffmpeg_status" -ne 0 ]; then
       # leave ffmpeg log for investigation
       rm -f "$wav_path"
       notify_error 'ffmpeg error'
-      return 1
+      return 254
     fi
   fi
 
   # now we know it's success, no need to leave the log behind
   rm -f "$ffmpeg_log_path"
 
-  # check this after handling ffmpeg log file
+  # check time after handling ffmpeg log file
   local minimum_ms
   minimum_ms="$(get_ms "$min_duration_seconds")"
   if [ "$run_time_ms" -lt "$minimum_ms" ]; then
@@ -150,6 +152,7 @@ start_recording() {
     return 0
   fi
 
+  # check wav
   local validate_status=0
   validate_wav "$wav_path" || validate_status="$?"
   if [ "$validate_status" -ne 0 ]; then
@@ -161,6 +164,7 @@ start_recording() {
     return 254
   fi
 
+  # transcribe
   notify 'Transcribing...'
 
   local response_path="${temp_dir}/${clip_id}.response.json"
@@ -192,6 +196,7 @@ start_recording() {
 
   rm -f "$wav_path"
 
+  # check transcript
   local transcript
   transcript="$(jq -r '.text // empty' <"$response_path" | clean_whitespace || true)"
   rm -f "$response_path"
@@ -216,8 +221,10 @@ stop() {
   local clip_id
   local pid
 
+  # todo: remove shopt by using ls or find?
   shopt -s nullglob
   local pids=()
+  # todo: collect *.pid. If none, sleep and retry
   for pid_path in "$temp_dir"/*.pid; do
     clip_id="$(basename "$pid_path" .pid)"
     if [ "$clip_id" = '*' ]; then
