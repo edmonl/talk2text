@@ -23,7 +23,7 @@ Each recording gets a unique clip ID based on the current timestamp plus a short
 - `<clip_id>.response.json`
 
 ### Recorder
-`talk2text-record` starts a detached worker that:
+`talk2text record [command...]` starts a detached worker that:
 
 - records mono 16 kHz WAV audio with `ffmpeg`
 - writes the `ffmpeg` PID to `<clip_id>.pid`
@@ -32,9 +32,10 @@ Each recording gets a unique clip ID based on the current timestamp plus a short
 - validates the WAV with `ffprobe`
 - ignores clips shorter than the configured minimum duration
 - sends the winning clip to the Whisper server
-- includes a cleaned `prompt` form field from the selection clipboard when it is not empty
-- copies the returned text with `wl-copy`
-- shows notifications for recording, transcription, success, and failures
+- includes a cleaned `prompt` form field from `$temp_dir/transcription-context` when it is not empty
+- appends the returned text to `$temp_dir/transcript`
+- executes the optional command provided as extra arguments to `record`, appending the path to the context file and the transcript file as the final two arguments
+- shows notifications for recording and failures
 
 ### Release Handler
 `talk2text-stop` scans `*.pid` files, confirms each PID still belongs to the expected `ffmpeg` command for that clip, removes the pid file, and stops the process with escalating signals if needed.
