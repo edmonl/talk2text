@@ -69,6 +69,7 @@ Runtime scripts expect:
 - `ffprobe`
 - `curl`
 - `jq`
+- `find`
 - `notify-send`
 
 The installer additionally expects `systemctl`, `cmake`, `make`, and `git`.

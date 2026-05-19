@@ -120,7 +120,7 @@ start_recording() {
   local ffmpeg_pid="$!"
   local pid_path="${temp_dir}/${clip_id}.pid"
   printf '%s\n' "$ffmpeg_pid" >"$pid_path"
-  
+
   # Delay the "Recording..." notification so that quick taps
   # (shorter than min_duration_seconds) don't spam the user.
   (
@@ -212,7 +212,7 @@ start_recording() {
     return 255
   fi
 
-  printf '%s ' "$transcript" >> "$temp_dir/transcript"
+  printf '%s ' "$transcript" >>"$temp_dir/transcript"
 }
 
 pid_matches_known_prefix() {
@@ -228,33 +228,35 @@ stop() {
   local clip_id
   local pid
 
-  # todo: remove shopt by using ls or find?
-  shopt -s nullglob
   local pids=()
-  # todo: collect *.pid. If none, sleep and retry
-  for pid_path in "$temp_dir"/*.pid; do
-    clip_id="$(basename "$pid_path" .pid)"
-    if [ "$clip_id" = '*' ]; then
-      continue
-    fi
 
-    pid="$(cat "$pid_path" 2>/dev/null || true)"
-    rm -f "$pid_path"
-    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
-      continue
-    fi
+  # To handle race conditions where the stop command is issued right after
+  # recording starts but before the pid file is written, retry a few times.
+  # We use process substitution instead of a pipe (find ... | while ...)
+  # so the `while` loop runs in the current shell, allowing modifications
+  # to the `pids` array to persist after the loop exits.
+  for _ in {1..3}; do
+    while IFS= read -r -d '' pid_path; do
+      clip_id="$(basename "$pid_path" .pid)"
 
-    if ! kill -0 "$pid"; then
-      continue
-    fi
+      pid="$(cat "$pid_path" 2>/dev/null || true)"
+      rm -f "$pid_path"
+      if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        continue
+      fi
 
-    if ! pid_matches_known_prefix "$pid" "$clip_id"; then
-      continue
+      if ! pid_matches_known_prefix "$pid" "$clip_id"; then
+        continue
+      fi
+      kill -INT "$pid" || true
+      pids+=("$pid")
+    done < <(find "$temp_dir" -maxdepth 1 -name '*.pid' -print0)
+
+    if [ "${#pids[@]}" -gt 0 ]; then
+      break
     fi
-    kill -INT "$pid" || true
-    pids+=("$pid")
+    sleep 0.1
   done
-  shopt -u nullglob
 
   if [ "${#pids[@]}" -eq 0 ]; then
     return
