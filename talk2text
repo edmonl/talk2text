@@ -36,7 +36,7 @@ readonly ffmpeg_cmd=(
 readonly cmd_prefix="${ffmpeg_cmd[*]} $temp_dir"
 
 notify() {
-  notify-send -t 5000 'talk2text' "$1" >/dev/null 2>&1 || true
+  notify-send -t 5000 'talk2text' "$1" || true
 }
 
 notify_error() {
@@ -125,7 +125,7 @@ start_recording() {
   # (shorter than min_duration_seconds) don't spam the user.
   (
     sleep "$min_duration_seconds"
-    if kill -0 "$ffmpeg_pid" 2>/dev/null; then
+    if kill -0 "$ffmpeg_pid"; then
       notify 'Recording...'
     fi
   ) &
@@ -239,7 +239,7 @@ stop() {
     while IFS= read -r -d '' pid_path; do
       clip_id="$(basename "$pid_path" .pid)"
 
-      pid="$(cat "$pid_path" 2>/dev/null || true)"
+      pid="$(cat "$pid_path" || true)"
       rm -f "$pid_path"
       if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
         continue
