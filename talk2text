@@ -10,7 +10,7 @@ readonly max_duration_seconds="${TALK2TEXT_MAX_DURATION_SECONDS:-100}"
 readonly server_url="${TALK2TEXT_SERVER_URL:-http://127.0.0.1:9898/inference}"
 readonly server_connect_timeout="${TALK2TEXT_SERVER_CONNECT_TIMEOUT:-1}"
 readonly server_max_time="${TALK2TEXT_SERVER_MAX_TIME:-10}"
-readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-2s}"
+readonly stop_timeout="${TALK2TEXT_RECORD_STOP_TIMEOUT:-0.5}"
 
 temp_dir='/tmp'
 if [ -d "${XDG_RUNTIME_DIR:-}" ]; then
@@ -125,7 +125,7 @@ start_recording() {
   # (shorter than min_duration_seconds) don't spam the user.
   (
     sleep "$min_duration_seconds"
-    if kill -0 "$ffmpeg_pid"; then
+    if kill -0 "$ffmpeg_pid" 2>/dev/null; then
       notify 'Recording...'
     fi
   ) &
@@ -249,7 +249,7 @@ stop() {
       if ! pid_matches_known_prefix "$pid" "$clip_id"; then
         continue
       fi
-      kill -INT "$pid" || true
+      kill -TERM "$pid" || true
       pids+=("$pid")
     done < <(find "$temp_dir" -maxdepth 1 -name '*.pid' -print0)
 
@@ -264,21 +264,8 @@ stop() {
   fi
 
   sleep "$stop_timeout"
-  local remaining_pids=()
   for pid in "${pids[@]}"; do
-    if kill -0 "$pid"; then
-      kill -TERM "$pid" || true
-      remaining_pids+=("$pid")
-    fi
-  done
-
-  if [ "${#remaining_pids[@]}" -eq 0 ]; then
-    return
-  fi
-
-  sleep "$stop_timeout"
-  for pid in "${remaining_pids[@]}"; do
-    if kill -0 "$pid"; then
+    if kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" || true
     fi
   done

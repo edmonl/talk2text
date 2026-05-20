@@ -2,7 +2,7 @@
 
 # Check if the talk2text-editor is already running
 if [ "$(swaymsg -t get_tree | jq '[.. | objects | select(.app_id == "talk2text-editor")] | length')" -gt 0 ]; then
-  swaymsg '[app_id="talk2text-editor"] scratchpad show'
+  swaymsg '[app_id="talk2text-editor"] scratchpad show' >/dev/null
   exit 0
 fi
 
@@ -28,4 +28,4 @@ EOF
 fi
 
 # Ensure the window rules are in place before launching
-swaymsg "exec alacritty --class talk2text-editor --title talk2text --working-directory \"$work_dir\" --command nvim -o \"$context_file\" \"$transcript_file\" -c 'luafile $luafile'"
+swaymsg "exec alacritty --class talk2text-editor --title talk2text --working-directory \"$work_dir\" --command nvim -o \"$context_file\" \"$transcript_file\" -c 'luafile $luafile'" >/dev/null
