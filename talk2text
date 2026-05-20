@@ -299,7 +299,7 @@ start() {
 
   if [ "$exit_code" -lt 128 ]; then
     if [ "$#" -gt 0 ]; then
-      exec "$@" "${temp_dir}/transcription-context" "${temp_dir}/transcript"
+      exec "$@" "${temp_dir}/transcript" "${temp_dir}/transcription-context"
     fi
     exit "$exit_code"
   else
