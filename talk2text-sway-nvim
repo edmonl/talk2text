@@ -15,7 +15,7 @@ if ! [ -e "$luafile" ]; then
 vim.api.nvim_create_autocmd('VimEnter', {
   once = true,
   callback = function()
-    vim.api.nvim_win_set_height(vim.api.nvim_get_current_win(), math.floor(vim.o.lines * 0.75))
+    vim.api.nvim_win_set_height(vim.api.nvim_get_current_win(), math.floor(vim.o.lines * 0.7))
     local buf = vim.fn.bufnr(vim.fn.argv(0))
     vim.keymap.set('n', 'qq', function()
       vim.fn.setreg('+', vim.api.nvim_buf_get_lines(buf, 0, -1, false), 'l')
