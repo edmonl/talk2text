@@ -207,12 +207,13 @@ start_recording() {
   local transcript
   transcript="$(jq -r '.text // empty' <"$response_path" | clean_whitespace || true)"
   rm -f "$response_path"
-  if [ "$transcript" = "" ]; then
+  if [ "$transcript" = "" ] || [ "$transcript" = '[BLANK_AUDIO]' ]; then
     notify '(blank transcript)'
     return 255
   fi
 
   printf '%s ' "$transcript" >>"$temp_dir/transcript"
+  printf '%s ' "$transcript" | wl-copy
 }
 
 pid_matches_known_prefix() {
@@ -333,14 +334,16 @@ main() {
     # Run the recording workflow in the background so the CLI command returns immediately.
     # Otherwise, the caller (like a keyboard shortcut) would hang and block until the
     # recording finishes or is stopped by another process.
-    start "$@" >/dev/null 2>&1 &
+    mkdir -p "$temp_dir"
+    start "$@" >"$temp_dir/record.log" 2>"$temp_dir/record.err" &
     ;;
   stop)
     if [ "$#" -ne 0 ]; then
       usage
       exit 1
     fi
-    stop >/dev/null 2>&1
+    mkdir -p "$temp_dir"
+    stop >"$temp_dir/stop.log" 2>"$temp_dir/stop.err"
     ;;
   *)
     usage

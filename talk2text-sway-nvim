@@ -8,9 +8,24 @@ fi
 
 context_file="$1"
 transcript_file="$2"
-work_dir="$(dirname "$2")"
+work_dir="$(dirname "$transcript_file")"
+luafile="$work_dir/talk2text.lua"
+if ! [ -e "$luafile" ]; then
+  cat > "$luafile" <<'EOF'
+vim.api.nvim_create_autocmd('VimEnter', {
+  once = true,
+  callback = function()
+    vim.api.nvim_win_set_height(vim.api.nvim_get_current_win(), math.floor(vim.o.lines / 3))
+    local buf = vim.fn.bufnr(vim.fn.argv(1))
+    vim.keymap.set('n', 'qq', function()
+      vim.fn.setreg('+', vim.api.nvim_buf_get_lines(buf, 0, -1, false), 'l')
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
+      vim.cmd('wqa!')
+    end)
+  end,
+})
+EOF
+fi
 
 # Ensure the window rules are in place before launching
-swaymsg 'for_window [app_id="talk2text-editor"] floating enable'
-
-swaymsg "exec alacritty --class talk2text-editor --title talk2text --work-directory '$work_dir' --command nvim -o '$context_file' '$transcript_file' -c 'lua vim.api.nvim_win_set_height(0, math.floor(vim.o.lines / 3))' -c 'nnoremap qq :wa<CR>:execute 'buffer' argv(1)<CR>:%y+<CR>:qa!<CR>'"
+swaymsg "exec alacritty --class talk2text-editor --title talk2text --working-directory \"$work_dir\" --command nvim -o \"$context_file\" \"$transcript_file\" -c 'luafile $luafile'"

@@ -92,10 +92,10 @@ need_cmd git
 need_cmd curl
 need_cmd ffmpeg
 need_cmd jq
-need_cmd wl-copy
-need_cmd wl-paste
 need_cmd notify-send
 need_cmd ffprobe
+need_cmd wl-copy
+need_cmd swaymsg
 
 get_systemd_service_status() {
   local code=0
