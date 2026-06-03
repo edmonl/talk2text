@@ -67,7 +67,9 @@ get_ms() {
 
 validate_wav() {
   local wav_path="$1"
-  # wav_path must exist here
+  if [ ! -s "$wav_path" ]; then
+    return 2
+  fi
 
   local duration
   duration="$(
