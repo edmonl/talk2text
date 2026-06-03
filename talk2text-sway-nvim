@@ -1,44 +1,60 @@
 #!/usr/bin/env sh
 
+readonly transcript_file="$1"
+readonly context_file="$2"
+work_dir="$(dirname "$transcript_file")"
+nvim_sock="$work_dir/talk2text-nvim.sock"
+if [ -S "$nvim_sock" ]; then
+  if ! nvim --server "$nvim_sock" --remote-send '<cmd>checktime<cr>' >/dev/null 2>&1; then
+    rm -f "$nvim_sock"
+  fi
+fi
+
 # Check if the talk2text-editor is already running
 if [ "$(swaymsg -t get_tree | jq '[.. | objects | select(.app_id == "talk2text-editor")] | length')" -gt 0 ]; then
   swaymsg '[app_id="talk2text-editor"] scratchpad show' >/dev/null
   exit 0
 fi
 
-transcript_file="$1"
-context_file="$2"
-work_dir="$(dirname "$transcript_file")"
 luafile="$work_dir/talk2text.lua"
 if ! [ -e "$luafile" ]; then
-  cat > "$luafile" <<'EOF'
+  cat >"$luafile" <<EOF
 vim.api.nvim_create_autocmd('VimEnter', {
   once = true,
   callback = function()
     vim.api.nvim_win_set_height(vim.api.nvim_get_current_win(), math.floor(vim.o.lines * 0.6))
-    local buf = vim.fn.bufnr(vim.fn.argv(0))
-
+    local buf0 = vim.fn.bufnr(vim.fn.argv(0))
+    local buf1 = vim.fn.bufnr(vim.fn.argv(1))
     vim.opt.updatetime = 1000
-    vim.api.nvim_create_autocmd({
-      'FocusGained',
-      'BufEnter',
-      'CursorHold',
-      'CursorHoldI',
-    }, {
-      callback = function()
-        if vim.fn.mode() ~= 'c' then
-          vim.cmd('checktime ' .. buf)
-        end
-      end,
-    })
 
-    vim.keymap.set('n', 'qq', function()
-      vim.fn.setreg('+', vim.api.nvim_buf_get_lines(buf, 0, -1, false), 'l')
-      vim.api.nvim_buf_set_lines(buf, 0, -1, false, {})
-      vim.cmd('wqa!')
-    end, { buffer = buf })
+    function prepare_buf(buf)
+      vim.api.nvim_create_autocmd({
+        'CursorHoldI',
+        'FocusLost',
+        'InsertLeave',
+        'TextChanged',
+      }, {
+        buffer = buf,
+        callback = function()
+          vim.api.nvim_buf_call(buf, function()
+            vim.cmd('silent! write')
+          end)
+        end,
+      })
+
+      vim.keymap.set('n', 'qq', function()
+        vim.fn.setreg('+', vim.api.nvim_buf_get_lines(buf0, 0, -1, false), 'l')
+        vim.api.nvim_buf_set_lines(buf0, 0, -1, false, {})
+        vim.cmd('wqa!')
+      end, { buffer = buf })
+    end
+
+    prepare_buf(buf0)
+    prepare_buf(buf1)
   end,
 })
+
+vim.fn.serverstart('$nvim_sock')
 EOF
 fi
 
