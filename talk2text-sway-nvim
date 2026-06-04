@@ -4,15 +4,21 @@ readonly transcript_file="$1"
 readonly context_file="$2"
 work_dir="$(dirname "$transcript_file")"
 nvim_sock="$work_dir/talk2text-nvim.sock"
+
+escape_vim_string() {
+  printf '%s' "$1" | sed "s/'/''/g"
+}
+
+vim_checktime="<cmd>execute 'checktime ' . fnameescape('$(escape_vim_string "$transcript_file")')<cr>"
 if [ -S "$nvim_sock" ]; then
-  if ! nvim --server "$nvim_sock" --remote-send '<cmd>checktime<cr>' >/dev/null 2>&1; then
+  if ! nvim --server "$nvim_sock" --remote-send "$vim_checktime" >/dev/null 2>&1; then
     rm -f "$nvim_sock"
   fi
 fi
 
 # Check if the talk2text-editor is already running
 if [ "$(swaymsg -t get_tree | jq '[.. | objects | select(.app_id == "talk2text-editor")] | length')" -gt 0 ]; then
-  swaymsg '[app_id="talk2text-editor"] scratchpad show' >/dev/null
+  swaymsg '[app_id="talk2text-editor"] focus' >/dev/null
   exit 0
 fi
 
@@ -23,8 +29,12 @@ vim.api.nvim_create_autocmd('VimEnter', {
   once = true,
   callback = function()
     vim.api.nvim_win_set_height(vim.api.nvim_get_current_win(), math.floor(vim.o.lines * 0.6))
-    local buf0 = vim.fn.bufnr(vim.fn.argv(0))
-    local buf1 = vim.fn.bufnr(vim.fn.argv(1))
+    local buf0 = vim.fn.bufnr('$transcript_file')
+    local buf1 = vim.fn.bufnr('$context_file')
+    if buf0 == -1 and buf1 == -1 then
+      return
+    end
+
     vim.opt.updatetime = 1000
 
     function prepare_buf(buf)
@@ -49,8 +59,12 @@ vim.api.nvim_create_autocmd('VimEnter', {
       end, { buffer = buf })
     end
 
-    prepare_buf(buf0)
-    prepare_buf(buf1)
+    if buf0 ~= -1 then
+      prepare_buf(buf0)
+    end
+    if buf1 ~= -1 then
+      prepare_buf(buf1)
+    end
   end,
 })
 
