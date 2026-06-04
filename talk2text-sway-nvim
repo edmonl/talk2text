@@ -3,18 +3,19 @@
 readonly transcript_file="$1"
 readonly context_file="$2"
 work_dir="$(dirname "$transcript_file")"
-nvim_sock="$work_dir/talk2text-nvim.sock"
+nvim_sock_prefix="$work_dir/talk2text-nvim.sock"
 
 escape_vim_string() {
   printf '%s' "$1" | sed "s/'/''/g"
 }
 
 vim_checktime="<cmd>execute 'checktime ' . fnameescape('$(escape_vim_string "$transcript_file")')<cr>"
-if [ -S "$nvim_sock" ]; then
+for nvim_sock in "$nvim_sock_prefix".*; do
+  [ -S "$nvim_sock" ] || continue
   if ! nvim --server "$nvim_sock" --remote-send "$vim_checktime" >/dev/null 2>&1; then
     rm -f "$nvim_sock"
   fi
-fi
+done
 
 # Check if the talk2text-editor is already running
 if [ "$(swaymsg -t get_tree | jq '[.. | objects | select(.app_id == "talk2text-editor")] | length')" -gt 0 ]; then
@@ -68,7 +69,7 @@ vim.api.nvim_create_autocmd('VimEnter', {
   end,
 })
 
-vim.fn.serverstart('$nvim_sock')
+vim.fn.serverstart('$nvim_sock_prefix.' .. vim.fn.getpid())
 EOF
 fi
 
