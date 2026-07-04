@@ -8,26 +8,22 @@ Transcription output can go to different destinations: clipboard, a popup Neovim
 
 Keeping targets inside the Go daemon would couple the daemon to optional tools and libraries. It would also make user-defined output behavior require Go changes or rebuilds.
 
-Neovim integration also needs dynamic switching. For example, when focus moves between two Neovim instances, the active output destination may change while the daemon continues running.
+Some integration may need dynamic destination switching. For example, when focus moves between two Neovim instances, an external integration may need to change where future transcripts are sent while the daemon continues running.
 
 ## Decision
 Use an external output command contract.
 
-The daemon accepts an `--output-cmd` path. After transcription succeeds, it writes the cleaned transcript text to a per-clip transcript file and invokes:
+The daemon accepts a configured output command. After clip processing completes, it writes the output text to a per-clip transcript file and invokes the command with enough arguments for the command to know both the clip classification and transcript file path.
 
-```sh
-<output-cmd> <clip_transcript_file>
-```
+The configured output command is invariant from the daemon's perspective. The daemon does not choose destinations, track focus, or manage routing state.
 
-The output command path may be a symlink. External tools may atomically update that symlink to point at a different output command.
-
-The daemon resolves and captures the output command at recording start. If the symlink changes during a recording, the active recording still uses the command captured at start; the new command applies to the next recording.
+External systems may implement routing behind that command. For example, the configured command may be a stable wrapper script or symlink whose target is managed outside this project.
 
 ## Consequences
-The Go daemon stays focused on recording, transcription, IPC, and process orchestration. Clipboard, Sway, terminal, and Neovim behavior can live in small scripts.
+The Go daemon stays focused on recording, transcription, IPC, transcript file creation, and process orchestration. Clipboard, Sway, terminal, and Neovim behavior can live in small scripts.
 
-Users can customize output behavior by writing any executable that accepts the per-clip transcript file path as its first argument.
+Users can customize output behavior by writing any executable that follows the output command contract defined in the current spec.
 
-The daemon needs robust process execution behavior: timeout handling, stderr logging, executable checks, and clear failure notifications. Failed output should leave the per-clip transcript file available for inspection.
+The daemon needs a small, stable process contract for handing completed transcripts to user-managed tools.
 
-The symlink-based switching model is simple and works for focus-driven editor integrations, but it does not provide structured metadata such as display names or availability. A future descriptor format can be introduced if that becomes necessary.
+Routing behavior belongs to the external output command or the system that manages it. This keeps destination-specific state outside the daemon.
