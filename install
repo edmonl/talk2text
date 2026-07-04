@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Configuration
-readonly action="${1:---install}"
+action="${1:---install}"
+readonly action
 readonly bin_dir="$HOME/bin"
 readonly whisper_model_name="${MODEL_NAME:-small.en}"
 readonly whisper_server_port="${PORT:-9898}"
@@ -11,18 +11,11 @@ readonly whisper_repo_dir="$HOME/projects/whisper.cpp"
 readonly whisper_systemd_service_name='whisper-server.service'
 readonly systemd_service_dir="$HOME/.config/systemd/user"
 
-# Constants
 if [ "$action" != '--install' ] && [ "$action" != '--uninstall' ]; then
   echo "Usage: $(basename "$0") [--install (default)|--uninstall]" >&2
   exit 1
 fi
 
-script_dir="$(cd "$(dirname "$0")" && pwd)"
-readonly script_dir
-readonly script_source="$script_dir/talk2text"
-readonly script_target="$bin_dir/talk2text"
-readonly editor_script_source="$script_dir/talk2text-sway-editor"
-readonly editor_script_target="$bin_dir/talk2text-sway-editor"
 readonly whisper_repo_build_dir="$whisper_repo_dir/build"
 readonly whisper_repo_model_dir="$whisper_repo_dir/models"
 readonly whisper_repo_server_bin="$whisper_repo_build_dir/bin/whisper-server"
@@ -42,14 +35,24 @@ need_cmd() {
   fi
 }
 
-need_cmd systemctl
+get_systemd_service_status() {
+  local code=0
+  systemctl is-active "$@" >/dev/null || code="$?"
 
-if [ "$action" = '--uninstall' ]; then
-  rm -f "$script_target"
-  echo "Removed main script: $script_target"
-  rm -f "$editor_script_target"
-  echo "Removed editor script: $editor_script_target"
+  if [ "$code" = 0 ]; then
+    echo active
+    return
+  fi
 
+  if [ "$code" = 3 ]; then
+    echo inactive
+    return
+  fi
+
+  echo unknown
+}
+
+uninstall_whisper() {
   if [ -x "$whisper_server_bin" ]; then
     systemctl --user disable --now "$whisper_systemd_service_name" >/dev/null || true
     echo "Disabled whisper user service: $whisper_systemd_service_name"
@@ -78,66 +81,45 @@ if [ "$action" = '--uninstall' ]; then
 
   echo 'Uninstalled.'
   if [ -d "$whisper_model_dir" ]; then
-    echo "Whipser models left in place: $whisper_model_dir and $whisper_repo_model_dir"
+    echo "Whisper models left in place: $whisper_model_dir and $whisper_repo_model_dir"
   fi
   if [ -d "$whisper_repo_dir" ]; then
-    echo "Whipser repository left in place: $whisper_repo_dir"
+    echo "Whisper repository left in place: $whisper_repo_dir"
   fi
-  exit 0
-fi
-
-need_cmd cmake
-need_cmd make
-need_cmd git
-need_cmd curl
-need_cmd ffmpeg
-need_cmd jq
-need_cmd notify-send
-need_cmd ffprobe
-need_cmd wl-copy
-need_cmd swaymsg
-
-get_systemd_service_status() {
-  local code=0
-  systemctl is-active "$@" >/dev/null || code="$?"
-
-  local status=unknown
-  if [ "$code" = 0 ]; then
-    status="active"
-  fi
-
-  if [ "$code" = 3 ]; then
-    status="inactive"
-  fi
-
-  echo "$status"
 }
 
-whisper_systemd_service_status="$(get_systemd_service_status --user "$whisper_systemd_service_name")"
-if [ "$whisper_systemd_service_status" = unknown ]; then
-  whisper_systemd_service_status="$(get_systemd_service_status "$whisper_systemd_service_name")"
-fi
+install_whisper() {
+  need_cmd cmake
+  need_cmd make
+  need_cmd git
+  need_cmd curl
 
-if [ "$whisper_systemd_service_status" = unknown ]; then
-  if [ ! -d "$whisper_repo_dir/.git" ]; then
-    mkdir -p "$whisper_repo_dir"
-    git clone https://github.com/ggml-org/whisper.cpp.git "$whisper_repo_dir"
-  else
-    git -C "$whisper_repo_dir" pull --ff-only
+  local whisper_systemd_service_status
+  whisper_systemd_service_status="$(get_systemd_service_status --user "$whisper_systemd_service_name")"
+  if [ "$whisper_systemd_service_status" = unknown ]; then
+    whisper_systemd_service_status="$(get_systemd_service_status "$whisper_systemd_service_name")"
   fi
 
-  cmake -S "$whisper_repo_dir" -B "$whisper_repo_build_dir" -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=1
-  cmake --build "$whisper_repo_build_dir" -j"$(nproc)"
-  mkdir -p "$bin_dir"
-  install -m 0755 "$whisper_repo_server_bin" "$whisper_server_bin"
-  echo "Built and Installed whisper server to $whisper_server_bin"
+  if [ "$whisper_systemd_service_status" = unknown ]; then
+    if [ ! -d "$whisper_repo_dir/.git" ]; then
+      mkdir -p "$whisper_repo_dir"
+      git clone https://github.com/ggml-org/whisper.cpp.git "$whisper_repo_dir"
+    else
+      git -C "$whisper_repo_dir" pull --ff-only
+    fi
 
-  "${whisper_repo_model_dir}/download-ggml-model.sh" "$whisper_model_name"
-  mkdir -p "$whisper_model_dir"
-  cp "$whisper_repo_model_path" "$whisper_model_path"
-  echo "Downloaded whisper model $whisper_model_name to $whisper_model_path"
+    cmake -S "$whisper_repo_dir" -B "$whisper_repo_build_dir" -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=1
+    cmake --build "$whisper_repo_build_dir" -j"$(nproc)"
+    mkdir -p "$bin_dir"
+    install -m 0755 "$whisper_repo_server_bin" "$whisper_server_bin"
+    echo "Built and Installed whisper server to $whisper_server_bin"
 
-  cat >"$whisper_service_unit_file_path" <<EOF
+    "${whisper_repo_model_dir}/download-ggml-model.sh" "$whisper_model_name"
+    mkdir -p "$whisper_model_dir"
+    cp "$whisper_repo_model_path" "$whisper_model_path"
+    echo "Downloaded whisper model $whisper_model_name to $whisper_model_path"
+
+    cat >"$whisper_service_unit_file_path" <<EOF
 [Unit]
 Description=Whisper HTTP server
 After=default.target
@@ -151,25 +133,28 @@ RestartSec=2
 WantedBy=default.target
 EOF
 
-  systemctl --user daemon-reload
-  systemctl --user enable --now "$whisper_systemd_service_name"
-  echo "Started systemd user service: service $whisper_systemd_service_name, port: $whisper_server_port"
-else
-  echo "Systemd service already exists: $whisper_systemd_service_name, status: $whisper_systemd_service_status"
-  echo "Please make sure whisper server listens to port $whisper_server_port"
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$whisper_systemd_service_name"
+    echo "Started systemd user service: service $whisper_systemd_service_name, port: $whisper_server_port"
+  else
+    echo "Systemd service already exists: $whisper_systemd_service_name, status: $whisper_systemd_service_status"
+    echo "Please make sure whisper server listens to port $whisper_server_port"
+  fi
+}
+
+need_cmd systemctl
+
+if [ "$action" = '--uninstall' ]; then
+  uninstall_whisper
+  exit 0
 fi
 
-mkdir -p "$bin_dir"
-cp "$script_source" "$script_target"
-cp "$editor_script_source" "$editor_script_target"
+install_whisper
+
 cat <<'EOF'
 Install complete.
 
 Example checks:
   systemctl --user status ${whisper_systemd_service_name}
   journalctl --user -u ${whisper_systemd_service_name}
-
-Example Sway config:
-  bindsym --no-repeat F12 exec $script_target record $editor_script_target
-  bindsym --release F12 exec $script_target stop
 EOF

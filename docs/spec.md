@@ -3,31 +3,29 @@
 ## Goal
 A minimal push-to-talk speech-to-text tool for Linux desktops.
 
-While the record key is held, audio is recorded from the microphone. When the key is released, recording stops. The usable clip is sent to a local Whisper HTTP server, and the returned text is routed to the currently selected output target.
+While the record key is held, audio is recorded from the microphone. When the key is released, recording stops. The usable clip is sent to the configured Whisper-compatible HTTP endpoint, and the returned text is passed to the configured output command.
 
 The runtime should optimize for low key-press latency. The long-term implementation is a Go daemon that stays running, handles recording over IPC, and keeps the microphone stream warm for a short idle window after each recording.
-
-The daemon core should be agnostic about the window manager and specific Linux distribution. Default packaged adapters and installer behavior may be opinionated for the current primary environment: Wayland, Sway, and Debian-like systems.
 
 ## Runtime Model
 
 ### Components
 The runtime is split into:
 
-1. `talk2textd`
-   - Long-running Go daemon.
-   - Owns audio capture, transcription, target routing, notifications, and runtime state.
+1. `talk2text daemon`
+   - Long-running daemon mode of the `talk2text` executable.
+   - Owns audio capture, transcription, output command routing, notifications, and runtime state.
    - Listens on a Unix socket under the runtime directory.
-   - Starts automatically as a user `systemd` service.
+   - Started by the user's preferred session startup mechanism.
 
-2. `talk2textctl`
-   - Small shortcut-facing client.
-   - Sends commands to `talk2textd` over the Unix socket and exits quickly.
+2. `talk2text` client subcommands
+   - Small shortcut-facing command modes in the same executable.
+   - Send commands to the daemon over the Unix socket and exit quickly.
    - Intended for desktop shortcut bindings.
 
-3. `whisper-server`
-   - Local `whisper.cpp` HTTP server.
-   - Keeps the Whisper model loaded between requests.
+3. Whisper-compatible HTTP endpoint
+   - External service, not managed by this project.
+   - Receives recorded clips and returns transcription responses.
 
 ### Portability Boundary
 The daemon core should only depend on portable Linux concepts and project interfaces:
@@ -37,19 +35,19 @@ The daemon core should only depend on portable Linux concepts and project interf
 3. Audio capture through the configured Go audio backend.
 4. Recording session state.
 5. Whisper HTTP requests.
-6. Output target interfaces.
-7. Notification interfaces.
+6. External output command execution.
+7. External notification command execution.
 8. Configuration and logs.
 
 The daemon core should not directly depend on a specific window manager, terminal emulator, clipboard command, editor, notification command, or Linux distribution.
 
-Environment-specific behavior belongs in adapters or packaging:
+Environment-specific behavior belongs in output commands, notification commands, or packaging:
 
-1. Wayland clipboard support belongs in a clipboard target adapter.
-2. Sway window focus/open behavior belongs in a popup editor target adapter.
-3. Neovim integration belongs in an editor target adapter or companion plugin.
-4. Desktop notifications belong in notifier adapters.
-5. Debian-specific installation choices belong in the installer or packaging layer.
+1. Wayland clipboard support belongs in an output command.
+2. Sway window focus/open behavior belongs in an output command.
+3. Neovim integration belongs in an output command or companion plugin.
+4. Desktop notifications belong in a notification command.
+5. Distribution-specific installation choices belong outside the core daemon.
 
 ### Runtime Directory
 Runtime files are stored under:
@@ -60,19 +58,20 @@ Runtime files are stored under:
 
 The runtime directory may contain:
 
-1. `talk2textd.sock`
+1. `talk2text.sock`
 2. `transcript`
 3. `transcription-context`
 4. `<clip_id>.wav`
 5. `<clip_id>.response.json`
-6. `talk2textd.log`
+6. `<clip_id>.txt`
+7. `talk2text.log`
 
-The selected output target is runtime-only in daemon memory and is not persisted.
+The selected output command is captured per recording session and is not persisted.
 
 ### Configuration
-Stable preferences are configured outside the runtime directory. The exact config path is implementation-defined, but should follow XDG conventions.
+For now, there is no configuration file. Configuration is provided by command-line options to `talk2text`, with built-in defaults.
 
-The configuration should include:
+Configurable options should include:
 
 1. Audio capture format:
    - input backend/device
@@ -85,30 +84,29 @@ The configuration should include:
    - maximum recording duration, default `100s`
    - warm retention window, default to a short value such as `15s`
 
-3. Whisper server:
-   - server URL, default `http://127.0.0.1:9898/inference`
+3. Whisper endpoint:
+   - endpoint URL, default `http://127.0.0.1:9898/inference`
    - connect timeout
    - request timeout
 
-4. Output targets:
-   - `default_target`, persistent
-   - `target_order`, persistent
-   - per-target settings
+4. Output command:
+   - output command path, passed as `--output-cmd`
 
-On daemon startup, `current_target` is initialized from `default_target`. Switching targets only changes in-memory state until the daemon exits.
+5. Notification command:
+   - notification command path, passed as `--notification-cmd`
+
+The output command path may be a symlink. This allows external tools, such as a Neovim plugin, to change the effective destination while the daemon keeps running.
 
 ## Audio Capture
 
-### Go Audio Backend
-The preferred Go package is `github.com/gen2brain/malgo`, the Go binding for `miniaudio`.
+### Capture Format
+The daemon records audio directly in-process without spawning `ffmpeg` for normal recording. The Go audio package choice is documented in [ADR 0001](decisions/0001-use-malgo-for-audio-capture.md).
 
 The initial implementation should request the direct Whisper-friendly format from the capture API:
 
 1. signed 16-bit PCM
 2. mono
 3. 16 kHz sample rate
-
-The daemon should not spawn `ffmpeg` for normal recording.
 
 ### Warm Retention Window
 The daemon should lazily open the microphone stream on first recording start.
@@ -126,81 +124,79 @@ The daemon should not globally force PipeWire, PulseAudio, ALSA, or hardware sam
 
 ## CLI Commands
 
-`talk2textctl` supports:
+`talk2text` supports:
 
-1. `start`
+1. `daemon`
+   - Runs the long-lived daemon process.
+   - Intended to be launched by the user's preferred session startup mechanism.
+
+2. `start`
    - Starts a recording session.
-   - Captures the selected output target at session start.
-   - If already recording, it should either no-op or return a clear error.
+   - Captures the resolved output command at session start.
+   - If already recording, discards the active session without transcription and starts a new session.
 
-2. `stop`
+3. `stop`
    - Stops the active recording session.
    - If not recording, it should no-op.
 
-3. `target-next`
-   - Advances to the next configured available target in `target_order`.
-   - Emits a notification with the selected target.
-   - Does not persist the selected target.
-
 4. `status`
    - Returns daemon status useful for scripts or status bars.
-   - Should include whether recording is active, current target, default target, and available targets.
-
-Optional future commands:
-
-1. `target <name>`
-   - Selects a target by name for the current daemon lifetime.
-
-2. `targets`
-   - Lists configured targets and availability.
+   - Should include whether recording is active, the configured output command path, and the configured notification command path.
 
 ## Shortcut Binding Model
 
-The expected key model uses at most two shortcut keys:
+The daemon must be running before `start` and `stop` commands are used. Startup is user-managed; for example, Sway users may start it from their Sway config:
+
+```sh
+exec talk2text daemon --output-cmd /run/user/1000/talk2text/current-output
+```
+
+The expected shortcut model uses a record key:
 
 1. Record key:
    - press starts recording
    - release stops recording
 
-2. Target switch key:
-   - cycles the selected output target
-
 Example:
 
 ```sh
 # Sway example
-bindsym --no-repeat F12 exec talk2textctl start
-bindsym --release F12 exec talk2textctl stop
-bindsym F11 exec talk2textctl target-next
+bindsym --no-repeat F12 exec talk2text start
+bindsym --release F12 exec talk2text stop
 ```
 
 ## Recording Workflow
 
-On `start`, `talk2textd`:
+On `start`, the daemon:
 
-1. Ensures an audio stream is open, opening it if needed.
-2. Starts a new session with a unique clip ID.
-3. Captures the current output target into the session.
-4. Begins collecting audio frames for that session.
-5. Emits a recording notification.
+1. Discards the active session without transcription if already recording.
+2. Ensures an audio stream is open, opening it if needed.
+3. Starts a new session with a unique clip ID.
+4. Resolves the output command path and captures the resolved command path into the session.
+5. Begins collecting audio frames for that session.
+6. Emits a `recording-started` notification event.
 
-On `stop`, `talk2textd`:
+On `stop`, the daemon:
 
-1. Stops collecting audio frames for the active session.
-2. Ignores clips shorter than the configured minimum duration.
-3. Writes a WAV file for the clip.
-4. Starts or resets the warm retention timer for the microphone stream.
-5. Sends the WAV file to the Whisper server.
-6. Includes a cleaned `prompt` form field from `transcription-context` when it is not empty.
-7. Drops empty transcripts or those containing only `[BLANK_AUDIO]`.
-8. Routes the transcript to the session's captured output target.
-9. Removes temporary per-clip files after successful processing.
+1. No-ops if there is no active recording session.
+2. Stops collecting audio frames for the active session.
+3. Ignores clips shorter than the configured minimum duration.
+4. Writes a WAV file for the clip.
+5. Starts or resets the warm retention timer for the microphone stream.
+6. Emits a `transcribing` notification event.
+7. Sends the WAV file to the configured Whisper endpoint.
+8. Includes a cleaned `prompt` form field from `transcription-context` when it is not empty.
+9. Drops empty transcripts or those containing only `[BLANK_AUDIO]`.
+10. Writes the cleaned transcript to a per-clip transcript file.
+11. Emits a `transcript-ready` notification event.
+12. Invokes the session's captured output command with the per-clip transcript file path as its first argument.
+13. Removes temporary per-clip files after successful processing.
 
 If the maximum recording duration is reached, the daemon should stop the recording automatically and process the clip.
 
 ## Transcription
 
-The daemon sends clips to the Whisper server using HTTP multipart form data.
+The daemon sends clips to the configured Whisper-compatible HTTP endpoint using multipart form data.
 
 The request should include:
 
@@ -212,135 +208,131 @@ The request should include:
 
 The response text is read from `.text`, cleaned of repeated whitespace, and ignored when empty or equal to `[BLANK_AUDIO]`.
 
-## Output Targets
+## Output Command
 
-Output targets are code-level adapters inside the daemon project. The daemon may contain concrete target implementations, but the recording and transcription core should only depend on a target interface.
+The daemon routes transcripts by invoking an external output command. This keeps desktop, editor, and clipboard integrations outside the Go daemon.
 
-The selected target for a recording is captured at `start`. Switching targets during a recording affects the next recording, not the active one.
+The daemon is configured with:
 
-Target switching should skip unavailable targets when possible.
-
-### Target Interface
-Conceptually:
-
-```go
-type OutputTarget interface {
-    Name() string
-    Available(ctx context.Context) bool
-    Handle(ctx context.Context, event TranscriptEvent) error
-}
+```sh
+talk2text daemon --output-cmd /run/user/1000/talk2text/current-output
 ```
 
-### Transcript Event
-Conceptually:
+The output command path may be a symlink. External tools may atomically update the symlink to switch the destination while the daemon keeps running.
 
-```json
-{
-  "type": "transcript",
-  "id": "20260630T123456.123",
-  "text": "hello world",
-  "target": "clipboard-wayland",
-  "created_at": "2026-06-30T12:34:56-04:00",
-  "transcript_file": "/run/user/1000/talk2text/transcript",
-  "context_file": "/run/user/1000/talk2text/transcription-context"
-}
+The daemon resolves and captures the output command path at `start`. Switching the symlink during a recording affects the next recording, not the active one.
+
+After transcription succeeds, the daemon writes the cleaned transcript text to a per-clip transcript file and invokes:
+
+```sh
+<captured-output-command> <clip_transcript_file>
 ```
 
-### Built-In Targets
+The output command may be any executable script or program. It can read the transcript text from the file path passed as its first argument.
 
-1. `clipboard-wayland`
-   - Copies the transcript text to the Wayland clipboard using `wl-copy`.
-   - Availability requires `wl-copy`.
+Example clipboard output command:
 
-2. `popup-nvim-sway`
-   - Appends transcript text to the runtime transcript file.
-   - Opens or focuses a Sway/Alacritty/Neovim editor similar to the current script behavior.
-   - Availability requires the configured terminal, `swaymsg`, `nvim`, and related helper commands.
-
-3. `nvim-buffer`
-   - Sends the transcript to an already-running Neovim integration.
-   - Availability requires a plugin-registered runtime endpoint.
-   - The target must be considered ephemeral and should not be used as persisted daemon state.
-
-## Notifications
-
-Notifications are code-level adapters inside the daemon project. The recording and transcription core should depend on a notification interface rather than shelling out directly.
-
-Conceptually:
-
-```go
-type Notifier interface {
-    RecordingStarted(ctx context.Context, session SessionInfo) error
-    Transcribing(ctx context.Context, session SessionInfo) error
-    TranscriptReady(ctx context.Context, event TranscriptEvent) error
-    TargetChanged(ctx context.Context, target string) error
-    Error(ctx context.Context, err error) error
-}
+```sh
+#!/usr/bin/env sh
+wl-copy < "$1"
 ```
 
-Initial implementations:
+Example symlink switch:
 
-1. `freedesktop`
-   - Uses desktop notifications, for example through `notify-send` or a native D-Bus implementation.
-
-2. `noop`
-   - Suppresses notifications.
-
-## Adapter Registry
-
-Output targets and notification backends should be registered through small registries so adding a new adapter is local and does not require changing recorder/transcriber code.
-
-Conceptually:
-
-```go
-type TargetFactory func(Config) (OutputTarget, error)
-
-type TargetRegistry struct {
-    targets map[string]TargetFactory
-}
+```sh
+ln -sfn "$new_output_cmd" "$runtime_dir/current-output.tmp"
+mv -Tf "$runtime_dir/current-output.tmp" "$runtime_dir/current-output"
 ```
 
-Adding a target should look like registering a name and constructor:
+The daemon should treat a missing, non-executable, or failing output command as an output failure: log stderr, emit an `error` notification event, and keep the per-clip transcript file for inspection.
 
-```go
-registry.Register("clipboard-wayland", clipboardwayland.New)
-registry.Register("popup-nvim-sway", popupnvimsway.New)
-registry.Register("nvim-buffer", nvimbuffer.New)
+## Notification Command
+
+The daemon emits notifications by invoking an external notification command. This keeps desktop notification behavior outside the Go daemon.
+
+The daemon may be configured with:
+
+```sh
+talk2text daemon --notification-cmd /home/meng/bin/talk2text-notify
 ```
 
-## Whisper Server
-The runtime expects an HTTP endpoint at `http://127.0.0.1:9898/inference` by default. The installer provisions `whisper.cpp` `whisper-server` as a user `systemd` service and keeps the model loaded between requests.
+If `--notification-cmd` is not set, the daemon should suppress notifications.
 
-## Installer
-`install` supports:
+The notification command path may be a symlink. The daemon invokes the configured path for each event, so external tools may update the symlink to change notification behavior while the daemon keeps running.
 
-1. `--install` to build or update the managed `whisper-server`, install user services, build/copy `talk2textd` and `talk2textctl` into `~/bin`, and install default configuration.
-2. `--uninstall` to remove installed runtime binaries and, when the managed `~/bin/whisper-server` exists, remove that binary, the user service, and local `whisper.cpp` build artifacts.
+The daemon invokes the notification command as:
 
-The installer leaves the repository checkout and downloaded model files in place.
+```sh
+<notification-command> <event> [detail]
+```
+
+Events:
+
+1. `recording-started`
+2. `transcribing`
+3. `transcript-ready`
+   - detail: per-clip transcript file path
+4. `error`
+   - detail: error summary
+
+Example notification command:
+
+```sh
+#!/usr/bin/env sh
+event="$1"
+detail="${2:-}"
+notify-send -t 5000 'talk2text' "$event $detail"
+```
+
+Notification command failures should be logged but should not fail recording, transcription, or output handling.
+
+## Whisper Endpoint
+The daemon expects a Whisper-compatible HTTP endpoint at `http://127.0.0.1:9898/inference` by default. The endpoint is external to this project and must already be running.
+
+## Installation
+This project has trivial installation requirements: build the `talk2text` executable and place it somewhere on `PATH`.
+
+Whisper endpoint setup is external to this project.
 
 ## Runtime Dependencies
 
 The daemon/client runtime expects:
 
-1. `talk2textd`
-2. `talk2textctl`
-3. local Whisper HTTP server
-4. Linux audio stack supported by `malgo`/`miniaudio`
+1. `talk2text`
+2. external Whisper-compatible HTTP endpoint
+3. Linux audio stack supported by the selected Go audio backend
 
-Some adapters add optional runtime dependencies:
+Some output and notification commands add optional runtime dependencies:
 
-1. `clipboard-wayland`: `wl-copy`
-2. `popup-nvim-sway`: `swaymsg`, `alacritty` or configured terminal, `nvim`, `jq` if needed by the adapter implementation
-3. `freedesktop` notifications: `notify-send` or D-Bus notification support
+1. clipboard output command: `wl-copy`
+2. popup Neovim output command: `swaymsg`, `alacritty` or configured terminal, `nvim`, `jq` if needed by the script
+3. notification command: `notify-send` or D-Bus notification support
 
-The installer additionally expects `systemctl`, `cmake`, `make`, `git`, `curl`, and Go.
+Building `talk2text` requires Go.
+
+## Future Considerations
+
+1. `talk2text output <path>`
+   - Updates the output command symlink or another configured output pointer.
+
+2. Output command metadata
+   - A future descriptor format could add display names, command arguments, availability checks, and richer status.
+
+3. Notification command metadata
+   - A future descriptor format could add display names, supported events, and richer status.
+
+## Open Questions
+
+1. Should the daemon require `--output-cmd` to resolve to an executable at startup, or only when a recording starts?
+2. Should failed output commands leave per-clip WAV files in addition to transcript files?
+3. Should the daemon provide a helper command for atomically updating the output command symlink?
+4. Should the daemon require `--notification-cmd` to resolve to an executable at startup, or only when an event is emitted?
 
 ## Non-Goals
 
 1. Typing injection
-2. Streaming partial transcripts into targets while recording
+2. Streaming partial transcripts into output commands while recording
 3. Multi-language orchestration
 4. Noise suppression
 5. Waybar integration
-6. Persisting the runtime-selected output target across daemon restarts
+6. Persisting editor focus or other dynamic output destination state inside the daemon
