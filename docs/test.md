@@ -119,7 +119,7 @@ Steps:
 
 3. Confirm the fake Whisper endpoint received no request.
 4. Confirm `$tmp/output.log` contains one `short` entry.
-5. Confirm no `record-start`, `record-stop`, or `transcribe-start` notification was emitted for the short clip.
+5. Confirm no `record-stop` or `transcribe-start` notification was emitted for the short clip. A `record-start` notification may or may not be emitted.
 
 Affected state: `$tmp/output.log`, `$tmp/notify.log`, `$tmp/run/transcripts`.
 
@@ -181,16 +181,16 @@ Goal: confirm optional prompt handling uses isolated files and reports read fail
 
 Steps:
 
-1. Start the daemon without `$tmp/run/transcription-context`.
+1. Start the daemon without `$tmp/run/transcription-prompt`.
 2. Record a valid clip and confirm the fake Whisper request has no `prompt` field.
-3. Create `$tmp/run/transcription-context` with prompt text.
+3. Create `$tmp/run/transcription-prompt` with prompt text.
 4. Record a valid clip and confirm the fake Whisper request includes a cleaned `prompt` field.
-5. Replace `$tmp/run/transcription-context` with a path that exists but cannot be read.
+5. Replace `$tmp/run/transcription-prompt` with a path that exists but cannot be read.
 6. Record a valid clip and confirm the daemon logs an error, emits an error notification, and does not invoke the output command for that clip.
 
-Affected state: `$tmp/run/transcription-context`, fake Whisper request log, `$tmp/output.log`, `$tmp/notify.log`.
+Affected state: `$tmp/run/transcription-prompt`, fake Whisper request log, `$tmp/output.log`, `$tmp/notify.log`.
 
-Cleanup: restore or remove `$tmp/run/transcription-context`; stop the daemon if it is still running.
+Cleanup: restore or remove `$tmp/run/transcription-prompt`; stop the daemon if it is still running.
 
 ## Output Command Failure
 

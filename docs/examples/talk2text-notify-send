@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+
+level="${1:-}"
+code="${2:-}"
+message="${3:-}"
+
+case "$level:$code" in
+  info:record-start|info:transcribe-start)
+    notify-send -a talk2text -u normal -t 3000 "Talk2text" "$message"
+    ;;
+  error:*)
+    notify-send -a talk2text -u critical -t 5000 "Talk2text" "$message"
+    ;;
+esac

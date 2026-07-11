@@ -1,0 +1,54 @@
+#!/usr/bin/env sh
+
+kind="${1:-}"
+path="${2:-}"
+
+notify() {
+  message="$1"
+  if ! command -v notify-send >/dev/null 2>&1; then
+    exit 1
+  fi
+  notify-send -a talk2text -u critical -t 5000 "Talk2text" "$message" >/dev/null
+}
+
+copy_with() {
+  command_name="$1"
+  case "$command_name" in
+    wl-copy)
+      wl-copy < "$path"
+      ;;
+    xclip)
+      xclip -selection clipboard < "$path"
+      ;;
+    xsel)
+      xsel --clipboard --input < "$path"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+[ "$kind" = text ] || exit 0
+
+if [ ! -r "$path" ]; then
+  notify "Clipboard output failed because transcript file could not be read"
+  exit
+fi
+
+clipboard_cmd=""
+for candidate in wl-copy xclip xsel; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    clipboard_cmd="$candidate"
+    break
+  fi
+done
+
+if [ -z "$clipboard_cmd" ]; then
+  notify "Failed to send transcript to clipboard because of no supported clipboard command"
+  exit
+fi
+
+if ! copy_with "$clipboard_cmd"; then
+  notify "Clipboard output failed while running $clipboard_cmd"
+fi
