@@ -209,6 +209,22 @@ Affected state: `$tmp/run/transcripts`, `$tmp/notify.log`, daemon stderr log.
 
 Cleanup: stop the daemon if it is still running; remove `$tmp` when inspection is complete.
 
+## Transcript File Retention
+
+Goal: confirm runtime retention removes transcript files outside the configured clip-ID window.
+
+Steps:
+
+1. Set `TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW=2` and replace the fake output command with one that exits non-zero without removing its transcript file.
+2. Start the daemon and confirm status reports `transcript_retention_window: 2`.
+3. Record three valid text clips sequentially, waiting for each output command to exit before recording the next.
+4. Confirm the transcript with the lowest clip ID was removed and the two newest clip IDs remain.
+5. Confirm the remaining files contain their expected transcript text.
+
+Affected state: `$tmp/run/transcripts`, `$tmp/notify.log`, daemon stderr log.
+
+Cleanup: stop the daemon if it is still running; unset `TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW`.
+
 ## Notification Command Failure
 
 Goal: confirm notification failures do not break recording, transcription, or output.

@@ -1,13 +1,20 @@
 package runtimedir
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const transcriptsDir = "transcripts"
+
+// TranscriptsDir returns the transcripts directory inside runtimeDir.
+func TranscriptsDir(runtimeDir string) string {
+	return filepath.Join(runtimeDir, transcriptsDir)
+}
 
 // WriteTranscript writes text to clipID's transcript file and returns its path.
 func WriteTranscript(runtimeDir string, clipID int, text string) (string, error) {
@@ -19,7 +26,7 @@ func WriteTranscript(runtimeDir string, clipID int, text string) (string, error)
 }
 
 func cleanTranscriptDir(runtimeDir string) (bool, error) {
-	path := filepath.Join(runtimeDir, transcriptsDir)
+	path := TranscriptsDir(runtimeDir)
 	if err := ensureOwnedDir(path, 0o700); err != nil {
 		return false, fmt.Errorf("not usable transcript directory: %w", err)
 	}
@@ -39,4 +46,42 @@ func cleanTranscriptDir(runtimeDir string) (bool, error) {
 		empty = false
 	}
 	return empty, nil
+}
+
+// ProcessTranscriptFiles calls process for each regular clip-ID transcript file.
+func ProcessTranscriptFiles(runtimeDir string, process func(name string, clipID int)) error {
+	entries, err := os.ReadDir(TranscriptsDir(runtimeDir))
+	if err != nil {
+		return fmt.Errorf("failed to read transcript directory: %w", err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("failed to inspect transcript file %s: %w", entry.Name(), err)
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		clipID := transcriptClipID(entry.Name())
+		if clipID == 0 {
+			continue
+		}
+		process(entry.Name(), clipID)
+	}
+	return nil
+}
+
+func transcriptClipID(name string) int {
+	value, ok := strings.CutSuffix(name, ".txt")
+	if !ok {
+		return 0
+	}
+	clipID, _ := strconv.Atoi(value)
+	if clipID < 1 {
+		return 0
+	}
+	return clipID
 }

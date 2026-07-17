@@ -15,13 +15,14 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 		State:      "off",
 		NextClipID: 1,
 		Config: &config.Config{
-			RuntimeDir:            "/tmp/talk2text-test",
-			WhisperEndpoint:       "http://127.0.0.1:8080/inference",
-			MinDuration:           500 * time.Millisecond,
-			MaxDuration:           100 * time.Second,
-			WarmRetention:         15 * time.Second,
-			WhisperConnectTimeout: time.Second,
-			WhisperRequestTimeout: 10 * time.Second,
+			RuntimeDir:                "/tmp/talk2text-test",
+			WhisperEndpoint:           "http://127.0.0.1:8080/inference",
+			MinDuration:               500 * time.Millisecond,
+			MaxDuration:               100 * time.Second,
+			WarmRetention:             15 * time.Second,
+			TranscriptRetentionWindow: 100,
+			WhisperConnectTimeout:     time.Second,
+			WhisperRequestTimeout:     10 * time.Second,
 		},
 	}
 	var out bytes.Buffer
@@ -31,6 +32,7 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 		"min_duration: 500ms",
 		"max_duration: 1m40s",
 		"warm_retention: 15s",
+		"transcript_retention_window: 100",
 		"whisper_connect_timeout: 1s",
 		"whisper_request_timeout: 10s",
 	} {

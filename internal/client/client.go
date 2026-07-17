@@ -77,6 +77,7 @@ func printStatus(w io.Writer, resp daemon.Status) {
 		fmt.Fprintf(w, "min_duration: %s\n", resp.Config.MinDuration)
 		fmt.Fprintf(w, "max_duration: %s\n", resp.Config.MaxDuration)
 		fmt.Fprintf(w, "warm_retention: %s\n", resp.Config.WarmRetention)
+		fmt.Fprintf(w, "transcript_retention_window: %d\n", resp.Config.TranscriptRetentionWindow)
 		fmt.Fprintf(w, "record_input_device: %s\n", resp.Config.RecordInputDevice)
 		fmt.Fprintf(w, "whisper_connect_timeout: %s\n", resp.Config.WhisperConnectTimeout)
 		fmt.Fprintf(w, "whisper_request_timeout: %s\n", resp.Config.WhisperRequestTimeout)

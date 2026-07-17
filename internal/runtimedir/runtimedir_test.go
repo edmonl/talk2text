@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -129,6 +130,76 @@ func TestWriteTranscriptWritesFile(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestProcessTranscriptFilesReturnsClipIDFiles(t *testing.T) {
+	run := t.TempDir()
+	if err := PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	for clipID := 1; clipID <= 3; clipID++ {
+		if _, err := WriteTranscript(run, clipID, strconv.Itoa(clipID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := make(map[string]int)
+	if err := ProcessTranscriptFiles(run, func(name string, clipID int) {
+		got[name] = clipID
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("processed files = %v, want three transcripts", got)
+	}
+	for clipID := 1; clipID <= 3; clipID++ {
+		name := strconv.Itoa(clipID) + ".txt"
+		if got[name] != clipID {
+			t.Fatalf("processed clip ID for %s = %d, want %d", name, got[name], clipID)
+		}
+	}
+}
+
+func TestPruneTranscriptFilesPreservesIgnoredEntries(t *testing.T) {
+	run := t.TempDir()
+	if err := PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteTranscript(run, 1, "one"); err != nil {
+		t.Fatal(err)
+	}
+	transcriptDir := filepath.Join(run, transcriptsDir)
+	dirPath := filepath.Join(transcriptDir, "kept")
+	linkPath := filepath.Join(transcriptDir, "link.txt")
+	invalidPath := filepath.Join(transcriptDir, "notes.txt")
+	if err := os.Mkdir(dirPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(transcriptDir, "1.txt"), linkPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(invalidPath, []byte("not a transcript"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var processed []string
+	if err := ProcessTranscriptFiles(run, func(name string, _ int) {
+		processed = append(processed, name)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(processed) != 1 || processed[0] != "1.txt" {
+		t.Fatalf("processed files = %v, want [1.txt]", processed)
+	}
+	if info, err := os.Lstat(dirPath); err != nil || !info.IsDir() {
+		t.Fatalf("directory was not preserved: info=%v err=%v", info, err)
+	}
+	if info, err := os.Lstat(linkPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink was not preserved: info=%v err=%v", info, err)
+	}
+	if _, err := os.Stat(invalidPath); err != nil {
+		t.Fatalf("regular file without a clip ID was not preserved: %v", err)
 	}
 }
 

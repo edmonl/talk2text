@@ -40,8 +40,11 @@ type daemon struct {
 
 	active   *session.Session
 	nextClip int
+	pending  atomic.Int32
 
-	pending atomic.Int32
+	muTranscripts                    sync.Mutex
+	transcriptRetentionHighWatermark int
+	protectedTranscripts             map[int]struct{}
 }
 
 // Run runs the long-lived daemon until ctx is canceled.
@@ -72,6 +75,9 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 		streamManagerDone:        make(chan struct{}),
 
 		nextClip: 1,
+	}
+	if cfg.TranscriptRetentionWindow > 0 {
+		d.protectedTranscripts = make(map[int]struct{})
 	}
 	d.warmTimer = timer.NewCallbackTimer(d.cfg.WarmRetention, func() {
 		d.muCapture.Lock()

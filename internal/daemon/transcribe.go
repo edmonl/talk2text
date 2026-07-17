@@ -41,12 +41,15 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 	var err error
 
 	if text != "" || outCmd != "" {
+		d.protectTranscript(clipID)
 		path, err = runtimedir.WriteTranscript(d.cfg.RuntimeDir, clipID, text)
 		if err != nil {
+			d.unprotectTranscript(clipID)
 			d.log.Printf("failed to write transcript %d: %s", clipID, err)
 			d.notify.Error("runtime", fmt.Sprintf("Output transcript %d failed", clipID))
 			return
 		}
+		defer d.releaseTranscript(clipID)
 	}
 
 	if outCmd == "" {

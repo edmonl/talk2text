@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -29,6 +30,8 @@ type Config struct {
 	MaxDuration time.Duration `json:"max_duration"`
 	// WarmRetention is how long the idle daemon keeps the audio stream open; zero closes it immediately.
 	WarmRetention time.Duration `json:"warm_retention"`
+	// TranscriptRetentionWindow retains recent clip IDs; zero disables runtime retention cleanup.
+	TranscriptRetentionWindow int `json:"transcript_retention_window"`
 	// RecordInputDevice selects the audio input device, or empty for default.
 	RecordInputDevice string `json:"record_input_device,omitempty"`
 	// WhisperConnectTimeout limits the Whisper endpoint connection phase; zero disables the connect timeout.
@@ -51,6 +54,10 @@ func DefaultConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	transcriptRetentionWindow, err := envInt("TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW", 100)
+	if err != nil {
+		return Config{}, err
+	}
 	whisperConnectTimeout, err := envDuration("TALK2TEXT_WHISPER_CONNECT_TIMEOUT", time.Second)
 	if err != nil {
 		return Config{}, err
@@ -60,15 +67,28 @@ func DefaultConfig() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		WhisperEndpoint:       defaultWhisperEndpoint,
-		MinDuration:           minDuration,
-		MaxDuration:           maxDuration,
-		WarmRetention:         warmRetention,
-		RecordInputDevice:     os.Getenv("TALK2TEXT_RECORD_INPUT_DEVICE"),
-		WhisperConnectTimeout: whisperConnectTimeout,
-		WhisperRequestTimeout: whisperRequestTimeout,
+		WhisperEndpoint:           defaultWhisperEndpoint,
+		MinDuration:               minDuration,
+		MaxDuration:               maxDuration,
+		WarmRetention:             warmRetention,
+		TranscriptRetentionWindow: transcriptRetentionWindow,
+		RecordInputDevice:         os.Getenv("TALK2TEXT_RECORD_INPUT_DEVICE"),
+		WhisperConnectTimeout:     whisperConnectTimeout,
+		WhisperRequestTimeout:     whisperRequestTimeout,
 	}
 	return cfg, nil
+}
+
+func envInt(name string, fallback int) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+	integer, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer: %w", name, err)
+	}
+	return integer, nil
 }
 
 func envDuration(name string, fallback time.Duration) (time.Duration, error) {
@@ -96,6 +116,9 @@ func ValidateConfig(cfg Config) error {
 	}
 	if err := validateConfigDuration("warm retention", cfg.WarmRetention); err != nil {
 		return err
+	}
+	if cfg.TranscriptRetentionWindow < 0 {
+		return errors.New("transcript retention window must not be negative")
 	}
 	if err := validateConfigDuration("whisper connect timeout", cfg.WhisperConnectTimeout); err != nil {
 		return err

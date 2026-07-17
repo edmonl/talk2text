@@ -87,10 +87,13 @@ Environment variables should configure lower-level tuning that does not need to 
    - `TALK2TEXT_MAX_DURATION`: maximum recording duration, default `100s`.
    - `TALK2TEXT_WARM_RETENTION`: warm retention window, default `15s`.
 
-2. Audio capture defaults
+2. Transcript retention
+   - `TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW`: number of recent clip IDs whose transcript files remain eligible for retention, default `100`; `0` disables runtime retention cleanup.
+
+3. Audio capture defaults
    - `TALK2TEXT_RECORD_INPUT_DEVICE`: input device, defaulting to the system default input device.
 
-3. Whisper request behavior
+4. Whisper request behavior
    - `TALK2TEXT_WHISPER_CONNECT_TIMEOUT`: connect timeout, default `1s`.
    - `TALK2TEXT_WHISPER_REQUEST_TIMEOUT`: request timeout after recording has stopped and the Whisper HTTP request has started, default `10s`.
 
@@ -115,6 +118,8 @@ When the daemon creates the runtime directory or `transcripts` directory, it sho
 The runtime directory and `transcripts` directory are usable only when they are directories owned by the current user. Existing paths that are not directories, are owned by a different user, or cannot be inspected should cause daemon startup to fail. The daemon checks ownership but does not reject existing directories based on their permission modes.
 
 On daemon startup, the daemon should create `<runtime_dir>/transcripts` if needed and clean stale transcript files from that directory. Startup cleanup should remove only regular files directly under `<runtime_dir>/transcripts`; it should not recursively delete subdirectories or follow paths outside the transcript directory. If cleanup of an individual file fails, the daemon should continue startup and may log that the transcript directory is not empty after cleanup. If the transcript directory cannot be created or used, daemon startup should fail.
+
+Runtime transcript cleanup and its configurable clip-ID window are specified in [spec/transcript-retention.md](spec/transcript-retention.md).
 
 On daemon startup, if `daemon.sock` already exists, the daemon should attempt to connect to it:
 
@@ -356,9 +361,9 @@ The output command owns transcript file cleanup:
 
 1. After successfully processing a transcript, the output command is expected to remove the per-clip transcript file.
 2. If the output command delegates processing to another process, it is responsible for arranging cleanup only after the delegated processing succeeds.
-3. The daemon does not treat the output command's exit status as proof that processing is complete and does not remove the transcript file when the command exits.
-4. If no output command is configured and a transcript file is created, the transcript file remains as the final output.
-5. If output processing or output-command cleanup fails, the transcript file remains until the daemon's next startup cleanup.
+3. The daemon does not treat the output command's exit status as proof that processing is complete and does not unconditionally remove the transcript file when the command exits. Transcript files remain subject to the retention policy.
+4. If no output command is configured and a transcript file is created, the transcript file remains as the final output, subject to the transcript retention policy.
+5. If output processing or output-command cleanup fails, the transcript file remains until removed by runtime retention cleanup or the daemon's next startup cleanup.
 
 This cleanup ownership decision is documented in [ADR 0007](decisions/0007-make-output-commands-responsible-for-transcript-cleanup.md).
 
@@ -416,8 +421,3 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 1. Transcription concurrency limit
    - The initial implementation has no explicit concurrency limit because recording is sequential.
    - If repeated valid recordings can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
-
-2. Transcript file retention
-   - Transcript files left behind by failed processing or failed output-command cleanup currently remain until the daemon next starts.
-   - Consider cleaning up old transcript files while the daemon runs, based on file age, a maximum number of files retained in the transcripts directory, or both.
-   - Any retention policy should avoid deleting files that may still be in use by asynchronous output processing.

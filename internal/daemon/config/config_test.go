@@ -28,6 +28,17 @@ func TestDefaultConfigReturnsEnvDurationParseErrors(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigReturnsEnvIntParseError(t *testing.T) {
+	t.Setenv("TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW", "many")
+	_, err := DefaultConfig()
+	if err == nil {
+		t.Fatal("DefaultConfig succeeded with invalid transcript retention window")
+	}
+	if !strings.Contains(err.Error(), "TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW must be an integer") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateConfigReturnsDurationErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -47,6 +58,13 @@ func TestValidateConfigReturnsDurationErrors(t *testing.T) {
 				cfg.MinDuration = time.Millisecond
 			},
 			want: "minimum duration must be 0s or at least 10ms",
+		},
+		{
+			name: "negative transcript retention window",
+			update: func(cfg *Config) {
+				cfg.TranscriptRetentionWindow = -1
+			},
+			want: "transcript retention window must not be negative",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -74,5 +92,27 @@ func TestDefaultConfigUsesEnvDuration(t *testing.T) {
 	}
 	if cfg.MinDuration != 1250*time.Millisecond {
 		t.Fatalf("MinDuration = %v, want 1.25s", cfg.MinDuration)
+	}
+}
+
+func TestDefaultConfigUsesTranscriptRetentionWindow(t *testing.T) {
+	t.Setenv("TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW", "25")
+	cfg, err := DefaultConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TranscriptRetentionWindow != 25 {
+		t.Fatalf("TranscriptRetentionWindow = %d, want 25", cfg.TranscriptRetentionWindow)
+	}
+}
+
+func TestDefaultConfigUsesDefaultTranscriptRetentionWindow(t *testing.T) {
+	t.Setenv("TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW", "")
+	cfg, err := DefaultConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TranscriptRetentionWindow != 100 {
+		t.Fatalf("TranscriptRetentionWindow = %d, want 100", cfg.TranscriptRetentionWindow)
 	}
 }

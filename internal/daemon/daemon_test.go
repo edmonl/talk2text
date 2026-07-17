@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -331,6 +333,211 @@ func TestProcessTranscriptAllowsOutputCommandToRemoveFile(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "failed to remove transcript") {
 		t.Fatalf("daemon logged missing transcript after output command removed it:\n%s", stderr.String())
+	}
+}
+
+func TestProcessTranscriptPrunesOutsideWindowWithoutOutputCommand(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{
+		RuntimeDir:                run,
+		TranscriptRetentionWindow: 2,
+	}
+	d := &daemon{
+		cfg:                  &cfg,
+		log:                  logger,
+		notify:               notifier.New(context.Background(), "", logger),
+		ctx:                  context.Background(),
+		protectedTranscripts: make(map[int]struct{}),
+	}
+
+	for clipID := 1; clipID <= 3; clipID++ {
+		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
+	}
+
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transcript below retention window still exists or stat failed differently: %v", err)
+	}
+	for clipID := 2; clipID <= 3; clipID++ {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+			t.Fatalf("retained transcript %d is missing: %v", clipID, err)
+		}
+	}
+}
+
+func TestProcessTranscriptDoesNotPruneWhenRetentionDisabled(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{RuntimeDir: run}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), "", logger),
+		ctx:    context.Background(),
+	}
+
+	for clipID := 1; clipID <= 2; clipID++ {
+		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
+	}
+	for clipID := 1; clipID <= 2; clipID++ {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+			t.Fatalf("transcript %d was removed with retention disabled: %v", clipID, err)
+		}
+	}
+}
+
+func TestProcessTranscriptPrunesWhenOutputCommandExits(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimedir.WriteTranscript(run, 1, "old"); err != nil {
+		t.Fatal(err)
+	}
+	outCmd := filepath.Join(run, "out")
+	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{
+		RuntimeDir:                run,
+		OutCmd:                    outCmd,
+		TranscriptRetentionWindow: 1,
+	}
+	d := &daemon{
+		cfg:                              &cfg,
+		log:                              logger,
+		notify:                           notifier.New(context.Background(), "", logger),
+		ctx:                              context.Background(),
+		transcriptRetentionHighWatermark: 1,
+		protectedTranscripts:             make(map[int]struct{}),
+	}
+
+	d.processTranscript(2, "new", true)
+
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transcript below retention window still exists or stat failed differently: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "2.txt")); err != nil {
+		t.Fatalf("new transcript is missing: %v", err)
+	}
+}
+
+func TestReleaseTranscriptRemovesProtectedFilesOutsideWindow(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{
+		RuntimeDir:                run,
+		TranscriptRetentionWindow: 1,
+	}
+	d := &daemon{
+		cfg:                  &cfg,
+		log:                  logger,
+		ctx:                  context.Background(),
+		protectedTranscripts: make(map[int]struct{}),
+	}
+
+	for clipID := 1; clipID <= 3; clipID++ {
+		d.protectTranscript(clipID)
+		if _, err := runtimedir.WriteTranscript(run, clipID, fmt.Sprintf("transcript %d", clipID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.releaseTranscript(3)
+	d.releaseTranscript(1)
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("released transcript 1 still exists or stat failed differently: %v", err)
+	}
+	d.releaseTranscript(2)
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "2.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("released transcript 2 still exists or stat failed differently: %v", err)
+	}
+	if len(d.protectedTranscripts) != 0 {
+		t.Fatalf("protected transcripts = %v, want empty", d.protectedTranscripts)
+	}
+}
+
+func TestProtectedTranscriptDoesNotAdvanceRetentionWindow(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{
+		RuntimeDir:                run,
+		TranscriptRetentionWindow: 2,
+	}
+	d := &daemon{
+		cfg:                  &cfg,
+		log:                  logger,
+		ctx:                  context.Background(),
+		protectedTranscripts: make(map[int]struct{}),
+	}
+
+	for clipID, text := range []string{"one", "two"} {
+		clipID++
+		d.protectTranscript(clipID)
+		if _, err := runtimedir.WriteTranscript(run, clipID, text); err != nil {
+			t.Fatal(err)
+		}
+		d.releaseTranscript(clipID)
+	}
+	d.protectTranscript(3)
+	if _, err := runtimedir.WriteTranscript(run, 3, "three"); err != nil {
+		t.Fatal(err)
+	}
+	if d.transcriptRetentionHighWatermark != 2 {
+		t.Fatalf("retention high-water mark = %d, want 2", d.transcriptRetentionHighWatermark)
+	}
+	for clipID := 1; clipID <= 3; clipID++ {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+			t.Fatalf("transcript %d is missing while clip 3 is protected: %v", clipID, err)
+		}
+	}
+
+	d.releaseTranscript(3)
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transcript 1 still exists after window advanced: %v", err)
+	}
+	for clipID := 2; clipID <= 3; clipID++ {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+			t.Fatalf("retained transcript %d is missing: %v", clipID, err)
+		}
+	}
+}
+
+func TestProcessTranscriptRemovesProtectionAfterWriteFailure(t *testing.T) {
+	run := t.TempDir()
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{
+		RuntimeDir:                run,
+		TranscriptRetentionWindow: 2,
+	}
+	d := &daemon{
+		cfg:                  &cfg,
+		log:                  logger,
+		notify:               notifier.New(context.Background(), "", logger),
+		ctx:                  context.Background(),
+		protectedTranscripts: make(map[int]struct{}),
+	}
+
+	d.processTranscript(7, "text", true)
+	if _, ok := d.protectedTranscripts[7]; ok {
+		t.Fatal("failed transcript write remained protected")
 	}
 }
 
