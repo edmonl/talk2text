@@ -29,11 +29,14 @@ copy_with() {
   esac
 }
 
-[ "$kind" = text ] || exit 0
+if [ "$kind" != text ]; then
+  rm -- "$path"
+  exit
+fi
 
 if [ ! -r "$path" ]; then
   notify "Clipboard output failed because transcript file could not be read"
-  exit
+  exit 1
 fi
 
 clipboard_cmd=""
@@ -46,9 +49,12 @@ done
 
 if [ -z "$clipboard_cmd" ]; then
   notify "Failed to send transcript to clipboard because of no supported clipboard command"
-  exit
+  exit 1
 fi
 
 if ! copy_with "$clipboard_cmd"; then
   notify "Clipboard output failed while running $clipboard_cmd"
+  exit 1
 fi
+
+rm -- "$path"

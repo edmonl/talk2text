@@ -29,7 +29,8 @@ Steps:
    kind="$1"
    path="$2"
    text="$(cat "$path" 2>/dev/null || true)"
-   printf '%s\t%s\t%s\n' "$kind" "$path" "$text" >> "$TALK2TEXT_TEST_OUT_LOG"
+   printf '%s\t%s\t%s\n' "$kind" "$path" "$text" >> "$TALK2TEXT_TEST_OUT_LOG" &&
+       rm -- "$path"
    SH
    chmod +x "$tmp/bin/out"
    ```
@@ -127,7 +128,7 @@ Cleanup: stop the daemon if it is still running.
 
 ## Successful Text Clip
 
-Goal: confirm a valid clip is transcribed, written, handed to the output command, and cleaned up after successful output.
+Goal: confirm a valid clip is transcribed, written, handed to the output command, and cleaned up by that command after successful output.
 
 Steps:
 
@@ -135,7 +136,7 @@ Steps:
 2. Run `start`, wait longer than the configured minimum duration, then run `stop`.
 3. Confirm the fake Whisper endpoint received one multipart `POST` request with the configured form fields.
 4. Confirm `$tmp/output.log` contains one `text` entry and the cleaned transcript text.
-5. Confirm the transcript file path passed to the output command no longer exists after the output command exits successfully.
+5. Confirm the fake output command removes the transcript file after recording its contents.
 6. Confirm notification log contains `record-start`, `record-stop`, `transcribe-start`, `transcribe-stop`, and `output-start` info events.
 7. Confirm status eventually reports zero pending transcriptions and the next clip ID incremented.
 
@@ -152,7 +153,7 @@ Steps:
 1. Start the daemon with fake Whisper returning empty text or `[BLANK_AUDIO]`.
 2. Record a clip longer than the configured minimum duration.
 3. Confirm `$tmp/output.log` contains one `blank` entry with empty transcript text.
-4. Confirm the transcript file is removed after the output command exits successfully.
+4. Confirm the fake output command removes the transcript file after recording its contents.
 
 Affected state: `$tmp/output.log`, `$tmp/notify.log`, `$tmp/run/transcripts`.
 
@@ -194,7 +195,7 @@ Cleanup: restore or remove `$tmp/run/transcription-prompt`; stop the daemon if i
 
 ## Output Command Failure
 
-Goal: confirm output command failures preserve transcript files for inspection.
+Goal: confirm an output command that fails before cleanup leaves its transcript file for inspection.
 
 Steps:
 

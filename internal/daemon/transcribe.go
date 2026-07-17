@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -74,9 +73,5 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 	d.notify.Info("output-start", fmt.Sprintf("Processing transcript %d", clipID))
 	if err := cmd.Wait(); err != nil {
 		d.notify.Error("output-command", fmt.Sprintf("Processing transcript %d failed", clipID))
-		return
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		d.log.Printf("failed to remove transcript %d: %s", clipID, err)
 	}
 }

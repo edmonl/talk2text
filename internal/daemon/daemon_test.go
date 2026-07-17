@@ -267,6 +267,40 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 	}
 }
 
+func TestProcessTranscriptDoesNotRemoveFileWhenOutputCommandSucceeds(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	outCmd := filepath.Join(run, "out")
+	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	logger := log.New(&stderr, "talk2text: ", 0)
+	cfg := config.Config{
+		RuntimeDir: run,
+		OutCmd:     outCmd,
+	}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), "", logger),
+		ctx:    context.Background(),
+	}
+
+	d.processTranscript(42, "hello world", true)
+
+	path := filepath.Join(run, "transcripts", "42.txt")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("daemon removed transcript after output command succeeded: %v", err)
+	}
+	if string(raw) != "hello world" {
+		t.Fatalf("transcript = %q, want original text", string(raw))
+	}
+}
+
 func TestProcessTranscriptAllowsOutputCommandToRemoveFile(t *testing.T) {
 	run := t.TempDir()
 	if err := runtimedir.PrepareDir(run, nil); err != nil {

@@ -350,15 +350,19 @@ The daemon emits an informational `output-start` notification for invoking the c
 
 The daemon invokes the configured output command path as provided. It does not resolve symlinks, canonicalize the command path, or assume any particular routing mechanism behind the command.
 
-The daemon does not impose a timeout on the output command. Output commands may be long-running or interactive, such as commands that coordinate with an editor. While an output command is running, cleanup for that clip waits for the command to exit.
+The daemon does not impose a timeout on the output command. Output commands may be long-running or interactive, such as commands that coordinate with an editor.
 
-The daemon owns transcript file cleanup:
+The output command owns transcript file cleanup:
 
-1. After the configured output command exits successfully, the daemon removes the per-clip transcript file.
-2. If no output command is configured and a transcript file is created, the transcript file remains as the final output.
-3. If output processing fails, the daemon keeps the transcript file for inspection.
+1. After successfully processing a transcript, the output command is expected to remove the per-clip transcript file.
+2. If the output command delegates processing to another process, it is responsible for arranging cleanup only after the delegated processing succeeds.
+3. The daemon does not treat the output command's exit status as proof that processing is complete and does not remove the transcript file when the command exits.
+4. If no output command is configured and a transcript file is created, the transcript file remains as the final output.
+5. If output processing or output-command cleanup fails, the transcript file remains until the daemon's next startup cleanup.
 
-The daemon should treat a configured but missing, non-executable, or failing output command as an output failure: emit an error notification and keep the per-clip transcript file for inspection. It may log startup or invocation errors, but it should not log output command wait or exit results.
+This cleanup ownership decision is documented in [ADR 0007](decisions/0007-make-output-commands-responsible-for-transcript-cleanup.md).
+
+The daemon should treat a configured but missing, non-executable, or failing output command as an output failure and emit an error notification. It may log startup or invocation errors, but it should not log output command wait or exit results.
 
 Example clipboard output command:
 
@@ -366,8 +370,10 @@ Example clipboard output command:
 #!/usr/bin/env sh
 kind="$1"
 path="$2"
-[ "$kind" = text ] || exit 0
-wl-copy < "$path"
+if [ "$kind" = text ]; then
+    wl-copy < "$path" || exit
+fi
+rm -- "$path"
 ```
 
 # Notification Command
@@ -410,3 +416,8 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 1. Transcription concurrency limit
    - The initial implementation has no explicit concurrency limit because recording is sequential.
    - If repeated valid recordings can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
+
+2. Transcript file retention
+   - Transcript files left behind by failed processing or failed output-command cleanup currently remain until the daemon next starts.
+   - Consider cleaning up old transcript files while the daemon runs, based on file age, a maximum number of files retained in the transcripts directory, or both.
+   - Any retention policy should avoid deleting files that may still be in use by asynchronous output processing.
