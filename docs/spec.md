@@ -418,6 +418,10 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 
 # Future Considerations
 
-1. Transcription concurrency limit
+1. [HTTP audio submission](spec/http-transcription.md)
+   - Add an optional `POST /transcribe` input so a mobile device can send a WAV clip to the daemon running on a remote editing machine.
+   - The standalone future specification defines the intended MVP behavior and its deferred security work.
+
+2. Transcription concurrency limit
    - The initial implementation has no explicit concurrency limit because recording is sequential.
    - If repeated valid recordings can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
