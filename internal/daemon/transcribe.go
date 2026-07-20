@@ -65,6 +65,7 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 		}
 	}
 	cmd := exec.Command(outCmd, kind, path)
+	cmd.Stderr = d.log.Writer()
 	if d.ctx.Err() != nil {
 		return
 	}

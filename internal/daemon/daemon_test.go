@@ -241,7 +241,7 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	outCmd := filepath.Join(run, "out")
-	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nprintf 'output failed with details\\n' >&2\nexit 7\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
@@ -266,6 +266,9 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 	}
 	if string(raw) != "hello world" {
 		t.Fatalf("transcript = %q, want original text", string(raw))
+	}
+	if !strings.Contains(stderr.String(), "output failed with details") {
+		t.Fatalf("output command stderr was not forwarded: %q", stderr.String())
 	}
 }
 

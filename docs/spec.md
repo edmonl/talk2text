@@ -357,6 +357,8 @@ The daemon invokes the configured output command path as provided. It does not r
 
 The daemon does not impose a timeout on the output command. Output commands may be long-running or interactive, such as commands that coordinate with an editor.
 
+The daemon forwards the output command's standard error to its own standard error so the command can report diagnostic details.
+
 The output command owns transcript file cleanup:
 
 1. After successfully processing a transcript, the output command is expected to remove the per-clip transcript file.
