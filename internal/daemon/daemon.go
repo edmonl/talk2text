@@ -121,8 +121,12 @@ func (d *daemon) stop(errChan chan error) {
 
 	s := d.active
 	d.active = nil
-	d.desireStream(streamWarm)
-	d.warmTimer.Start()
+	if d.cfg.WarmRetention <= 0 {
+		d.desireStream(streamOff)
+	} else {
+		d.desireStream(streamWarm)
+		d.warmTimer.Start()
+	}
 	d.muCapture.Unlock()
 
 	if s != nil {

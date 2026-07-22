@@ -170,6 +170,34 @@ func TestDaemonStopsStreamBeforeWarmRetentionAndClosesAfter(t *testing.T) {
 	t.Fatalf("stream was not closed after warm retention; stderr=%q", stderr.String())
 }
 
+func TestDaemonZeroWarmRetentionStopsWithoutDeadlock(t *testing.T) {
+	cfg := config.Config{WarmRetention: 0}
+	d := &daemon{
+		cfg:    &cfg,
+		active: session.NewSession(1),
+	}
+	d.warmTimer = newTestWarmTimer(d)
+
+	done := make(chan struct{})
+	go func() {
+		errChan := make(chan error, 1)
+		d.stop(errChan)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stop deadlocked with zero warm retention")
+	}
+
+	d.muCapture.Lock()
+	defer d.muCapture.Unlock()
+	if d.desiredStreamState != streamOff {
+		t.Fatalf("desired stream state = %v, want off", d.desiredStreamState)
+	}
+}
+
 func TestDaemonStartOpenStreamErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	var stderr bytes.Buffer
 	logger := log.New(&stderr, "talk2text: ", 0)
