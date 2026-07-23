@@ -111,7 +111,7 @@ The runtime directory may contain:
 
 1. `daemon.sock`
 2. `transcription-prompt`
-3. `transcripts/<seq>.txt`
+3. `transcripts/<seq>`
 
 When the daemon creates the runtime directory or `transcripts` directory, it should create them with owner-only permissions, such as `0700`. When the daemon creates transcript files, it should create them with owner-only permissions, such as `0600`. If these paths already exist, the daemon should not chmod them.
 
@@ -245,7 +245,7 @@ This provides faster repeated recording without keeping the microphone open all 
 
 # Recording and Clip Lifecycle
 
-The clip ID is a daemon-local sequence number that starts at `1` on daemon startup. Every accepted `start` consumes one clip ID, even if the clip is later short, discarded, failed, or auto-stopped. The transcript file path uses that sequence number, such as `<runtime_dir>/transcripts/<seq>.txt`. The daemon may truncate and overwrite stale transcript files from a previous daemon process.
+The clip ID is a daemon-local sequence number that starts at `1` on daemon startup. Every accepted `start` consumes one clip ID, even if the clip is later short, discarded, failed, or auto-stopped. The transcript file path uses that sequence number, such as `<runtime_dir>/transcripts/<seq>`. The daemon may truncate and overwrite stale transcript files from a previous daemon process.
 
 ## Concurrency
 

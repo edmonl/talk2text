@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
 
 const transcriptsDir = "transcripts"
@@ -18,7 +17,7 @@ func TranscriptsDir(runtimeDir string) string {
 
 // WriteTranscript writes text to clipID's transcript file and returns its path.
 func WriteTranscript(runtimeDir string, clipID int, text string) (string, error) {
-	path := filepath.Join(runtimeDir, transcriptsDir, strconv.Itoa(clipID)+".txt")
+	path := filepath.Join(runtimeDir, transcriptsDir, strconv.Itoa(clipID))
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		return "", err
 	}
@@ -75,12 +74,8 @@ func ProcessTranscriptFiles(runtimeDir string, process func(name string, clipID 
 }
 
 func transcriptClipID(name string) int {
-	value, ok := strings.CutSuffix(name, ".txt")
-	if !ok {
-		return 0
-	}
-	clipID, _ := strconv.Atoi(value)
-	if clipID < 1 {
+	clipID, _ := strconv.Atoi(name)
+	if clipID < 1 || strconv.Itoa(clipID) != name {
 		return 0
 	}
 	return clipID

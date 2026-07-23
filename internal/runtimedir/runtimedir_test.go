@@ -27,7 +27,7 @@ func TestPrepareDirCreatesAndCleansOnlyRegularTranscriptFiles(t *testing.T) {
 	if err := PrepareDir(run, nil); err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(run, transcriptsDir, "stale.txt")
+	stale := filepath.Join(run, transcriptsDir, "stale")
 	keptDir := filepath.Join(run, transcriptsDir, "kept")
 	if err := os.WriteFile(stale, []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestCleanTranscriptDirReportsEmpty(t *testing.T) {
 	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(transcriptDir, "stale.txt"), []byte("old"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(transcriptDir, "stale"), []byte("old"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	empty, err := cleanTranscriptDir(run)
@@ -113,7 +113,7 @@ func TestWriteTranscriptWritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPath := filepath.Join(run, transcriptsDir, "42.txt")
+	wantPath := filepath.Join(run, transcriptsDir, "42")
 	if path != wantPath {
 		t.Fatalf("path = %q, want %q", path, wantPath)
 	}
@@ -154,7 +154,7 @@ func TestProcessTranscriptFilesReturnsClipIDFiles(t *testing.T) {
 		t.Fatalf("processed files = %v, want three transcripts", got)
 	}
 	for clipID := 1; clipID <= 3; clipID++ {
-		name := strconv.Itoa(clipID) + ".txt"
+		name := strconv.Itoa(clipID)
 		if got[name] != clipID {
 			t.Fatalf("processed clip ID for %s = %d, want %d", name, got[name], clipID)
 		}
@@ -171,12 +171,12 @@ func TestPruneTranscriptFilesPreservesIgnoredEntries(t *testing.T) {
 	}
 	transcriptDir := filepath.Join(run, transcriptsDir)
 	dirPath := filepath.Join(transcriptDir, "kept")
-	linkPath := filepath.Join(transcriptDir, "link.txt")
-	invalidPath := filepath.Join(transcriptDir, "notes.txt")
+	linkPath := filepath.Join(transcriptDir, "link")
+	invalidPath := filepath.Join(transcriptDir, "notes")
 	if err := os.Mkdir(dirPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(transcriptDir, "1.txt"), linkPath); err != nil {
+	if err := os.Symlink(filepath.Join(transcriptDir, "1"), linkPath); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(invalidPath, []byte("not a transcript"), 0o600); err != nil {
@@ -189,8 +189,8 @@ func TestPruneTranscriptFilesPreservesIgnoredEntries(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(processed) != 1 || processed[0] != "1.txt" {
-		t.Fatalf("processed files = %v, want [1.txt]", processed)
+	if len(processed) != 1 || processed[0] != "1" {
+		t.Fatalf("processed files = %v, want [1]", processed)
 	}
 	if info, err := os.Lstat(dirPath); err != nil || !info.IsDir() {
 		t.Fatalf("directory was not preserved: info=%v err=%v", info, err)

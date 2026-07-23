@@ -214,7 +214,7 @@ It contains:
 
 1. `daemon.sock`: the Unix socket used by client commands.
 2. `transcription-prompt`: the optional Whisper prompt.
-3. `transcripts/<clip-id>.txt`: completed transcript files.
+3. `transcripts/<clip-id>`: completed transcript files.
 
 Directories and transcript files created by `talk2text` use owner-only permissions. The daemon prunes files outside the configured retention window and removes stale regular transcript files when it next starts.
 

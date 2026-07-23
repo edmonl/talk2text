@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -287,7 +288,7 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 
 	d.processTranscript(42, "hello world", true)
 
-	path := filepath.Join(run, "transcripts", "42.txt")
+	path := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("transcript was not kept after output command failure: %v", err)
@@ -324,7 +325,7 @@ func TestProcessTranscriptDoesNotRemoveFileWhenOutputCommandSucceeds(t *testing.
 
 	d.processTranscript(42, "hello world", true)
 
-	path := filepath.Join(run, "transcripts", "42.txt")
+	path := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("daemon removed transcript after output command succeeded: %v", err)
@@ -358,7 +359,7 @@ func TestProcessTranscriptAllowsOutputCommandToRemoveFile(t *testing.T) {
 
 	d.processTranscript(42, "hello world", true)
 
-	path := filepath.Join(run, "transcripts", "42.txt")
+	path := filepath.Join(run, "transcripts", "42")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("transcript still exists or stat failed differently: %v", err)
 	}
@@ -390,11 +391,11 @@ func TestProcessTranscriptPrunesOutsideWindowWithoutOutputCommand(t *testing.T) 
 		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
 	}
 
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("transcript below retention window still exists or stat failed differently: %v", err)
 	}
 	for clipID := 2; clipID <= 3; clipID++ {
-		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", strconv.Itoa(clipID))); err != nil {
 			t.Fatalf("retained transcript %d is missing: %v", clipID, err)
 		}
 	}
@@ -419,7 +420,7 @@ func TestProcessTranscriptDoesNotPruneWhenRetentionDisabled(t *testing.T) {
 		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
 	}
 	for clipID := 1; clipID <= 2; clipID++ {
-		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", strconv.Itoa(clipID))); err != nil {
 			t.Fatalf("transcript %d was removed with retention disabled: %v", clipID, err)
 		}
 	}
@@ -455,10 +456,10 @@ func TestProcessTranscriptPrunesWhenOutputCommandExits(t *testing.T) {
 
 	d.processTranscript(2, "new", true)
 
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("transcript below retention window still exists or stat failed differently: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "2.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "2")); err != nil {
 		t.Fatalf("new transcript is missing: %v", err)
 	}
 }
@@ -489,11 +490,11 @@ func TestReleaseTranscriptRemovesProtectedFilesOutsideWindow(t *testing.T) {
 	}
 	d.releaseTranscript(3)
 	d.releaseTranscript(1)
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("released transcript 1 still exists or stat failed differently: %v", err)
 	}
 	d.releaseTranscript(2)
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "2.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "2")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("released transcript 2 still exists or stat failed differently: %v", err)
 	}
 	if len(d.protectedTranscripts) != 0 {
@@ -535,17 +536,17 @@ func TestProtectedTranscriptDoesNotAdvanceRetentionWindow(t *testing.T) {
 		t.Fatalf("retention high-water mark = %d, want 2", d.transcriptRetentionHighWatermark)
 	}
 	for clipID := 1; clipID <= 3; clipID++ {
-		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", strconv.Itoa(clipID))); err != nil {
 			t.Fatalf("transcript %d is missing while clip 3 is protected: %v", clipID, err)
 		}
 	}
 
 	d.releaseTranscript(3)
-	if _, err := os.Stat(filepath.Join(run, "transcripts", "1.txt")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("transcript 1 still exists after window advanced: %v", err)
 	}
 	for clipID := 2; clipID <= 3; clipID++ {
-		if _, err := os.Stat(filepath.Join(run, "transcripts", fmt.Sprintf("%d.txt", clipID))); err != nil {
+		if _, err := os.Stat(filepath.Join(run, "transcripts", strconv.Itoa(clipID))); err != nil {
 			t.Fatalf("retained transcript %d is missing: %v", clipID, err)
 		}
 	}
@@ -661,7 +662,7 @@ func TestProcessTranscriptDoesNotStartOutputCommandAfterContextCanceled(t *testi
 
 	d.processTranscript(42, "hello world", true)
 
-	transcriptPath := filepath.Join(run, "transcripts", "42.txt")
+	transcriptPath := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(transcriptPath)
 	if err != nil {
 		t.Fatalf("transcript was not kept after canceled context: %v", err)
