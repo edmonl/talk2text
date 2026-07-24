@@ -132,6 +132,7 @@ Lower-level settings are environment variables read when the daemon starts:
 | --- | --- | --- |
 | `TALK2TEXT_MIN_DURATION` | `500ms` | Clips shorter than this are classified as `short` and are not transcribed; `0s` accepts every non-empty clip |
 | `TALK2TEXT_MAX_DURATION` | `100s` | Automatically stop a recording after this duration; `0s` disables the limit |
+| `TALK2TEXT_STOP_DELAY` | `250ms` | Continue recording briefly after a stop request so the end of speech is not clipped; `0s` stops immediately |
 | `TALK2TEXT_WARM_RETENTION` | `15s` | Keep the microphone stream open after a clip for faster repeated dictation; `0s` closes it immediately |
 | `TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW` | `100` | Retain transcript files from this many recent clip IDs; `0` disables runtime pruning |
 | `TALK2TEXT_RECORD_INPUT_DEVICE` | system default | Exact miniaudio capture-device name or ID |
@@ -145,8 +146,11 @@ For example:
 ```sh
 TALK2TEXT_MIN_DURATION=250ms \
 TALK2TEXT_MAX_DURATION=2m \
+TALK2TEXT_STOP_DELAY=300ms \
 talk2text daemon --whisper-endpoint http://127.0.0.1:8080/inference
 ```
+
+The daemon acknowledges `stop` immediately but continues collecting audio for the stop delay. If a new `start` arrives during that window, the daemon finishes the previous clip immediately and starts a new clip; the old delayed stop cannot stop the new recording.
 
 If you use `--runtime-dir`, pass the same option to `start`, `stop`, and `status` so that they connect to the same daemon.
 

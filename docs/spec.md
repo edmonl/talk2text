@@ -85,6 +85,7 @@ Environment variables should configure lower-level tuning that does not need to 
 1. Recording behavior
    - `TALK2TEXT_MIN_DURATION`: minimum accepted duration, default `500ms`.
    - `TALK2TEXT_MAX_DURATION`: maximum recording duration, default `100s`.
+   - `TALK2TEXT_STOP_DELAY`: duration to keep recording after an accepted stop command, default `250ms`.
    - `TALK2TEXT_WARM_RETENTION`: warm retention window, default `15s`.
 
 2. Transcript retention
@@ -257,7 +258,7 @@ Transcription and output processing may run concurrently for multiple stopped cl
 
 When handling an accepted `start`, the daemon:
 
-1. Discards the active session without transcription when a recording is already active.
+1. When a recording is already active, discards it without transcription, except that a session with a pending delayed stop is finalized and processed immediately.
 2. Ensures an audio stream is open, opening it if needed.
 3. Starts a new session with the next daemon-local sequence number as its clip ID.
 4. Begins collecting audio frames for that session.
@@ -270,9 +271,13 @@ The exact timing of `record-start` is implementation-defined and may be approxim
 When handling an accepted `stop`, the daemon:
 
 1. No-ops if there is no active recording session.
-2. Stops collecting audio frames for the active session.
-3. Starts or resets the warm retention timer for the microphone stream.
-4. Classifies and processes the clip according to the rules below.
+2. Acknowledges the command without waiting for the configured stop delay.
+3. Continues collecting audio frames for the configured stop delay, or stops immediately when the delay is zero.
+4. Stops collecting audio frames for the active session.
+5. Starts or resets the warm retention timer for the microphone stream.
+6. Classifies and processes the clip according to the rules below.
+
+The delayed stop is associated with the active clip. Repeated stop commands do not extend its deadline. If a new start is accepted before the deadline, the daemon cancels the delayed stop, finalizes the previous clip immediately, and starts a new clip. A delayed stop from an older clip must not stop a newer clip.
 
 If the configured maximum recording duration is reached, the daemon should stop the recording automatically and process the clip.
 

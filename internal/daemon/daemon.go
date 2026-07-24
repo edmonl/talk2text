@@ -38,9 +38,11 @@ type daemon struct {
 	desiredStreamStateSignal chan struct{}
 	streamManagerDone        chan struct{}
 
-	active   *session.Session
-	nextClip int
-	pending  atomic.Int32
+	active          *session.Session
+	nextClip        int
+	stopTimer       timer.Timer
+	pendingStopClip int
+	pending         atomic.Int32
 
 	muTranscripts                    sync.Mutex
 	transcriptRetentionHighWatermark int
@@ -106,14 +108,23 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 
 func (d *daemon) start(errChan chan error) {
 	d.muCapture.Lock()
-	defer d.muCapture.Unlock()
 	close(errChan)
 
 	d.warmTimer.Stop()
+	var stopped *session.Session
+	if d.active != nil && d.active.ID() == d.pendingStopClip {
+		stopped = d.active
+	}
+	d.cancelPendingStop()
 	clipID := d.nextClip
 	d.nextClip++
 	d.active = session.NewSession(clipID)
 	d.desireStream(streamRecording)
+	d.muCapture.Unlock()
+
+	if stopped != nil {
+		d.processStoppedSession(stopped)
+	}
 }
 
 func (d *daemon) stop(errChan chan error) {
@@ -125,23 +136,41 @@ func (d *daemon) stop(errChan chan error) {
 		return
 	}
 
-	s := d.active
-	d.active = nil
-	d.desireStream(streamWarm)
-	d.warmTimer.Start()
-	d.muCapture.Unlock()
-
-	if s != nil {
-		if s.Duration() > 0 {
-			d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped", s.ID()))
+	if d.cfg.StopDelay > 0 {
+		clipID := d.active.ID()
+		if d.pendingStopClip == clipID {
+			// repeated stop
+			d.muCapture.Unlock()
+			return
 		}
-		d.transcribe(s)
+
+		if d.pendingStopClip == 0 {
+			d.pendingStopClip = clipID
+			d.stopTimer = timer.NewCallbackTimer(d.cfg.StopDelay, func() {
+				d.muCapture.Lock()
+				if d.active == nil || d.active.ID() != clipID || d.pendingStopClip != clipID {
+					d.muCapture.Unlock()
+					return
+				}
+				s := d.stopActiveSession()
+				d.muCapture.Unlock()
+				d.processStoppedSession(s)
+			})
+			d.stopTimer.Start()
+			d.muCapture.Unlock()
+			return
+		}
 	}
+
+	s := d.stopActiveSession()
+	d.muCapture.Unlock()
+	d.processStoppedSession(s)
 }
 
 func (d *daemon) shutdown() {
 	d.muCapture.Lock()
 	d.warmTimer.Stop()
+	d.cancelPendingStop()
 	d.active = nil
 	d.desireStream(streamOff)
 	d.muCapture.Unlock()
@@ -168,6 +197,8 @@ func (d *daemon) onAudio(pcm []byte) {
 	s := d.active
 	wasEmpty := s.Duration() == 0
 	if err := s.OnPCM(pcm); err != nil {
+		// Recording may be ongoing and have the error while the stop is delayed.
+		d.cancelPendingStop()
 		d.active = nil
 		d.desireStream(streamWarm)
 		d.muCapture.Unlock()
@@ -176,6 +207,8 @@ func (d *daemon) onAudio(pcm []byte) {
 		return
 	}
 	if d.cfg.MaxDuration > 0 && s.Duration() >= d.cfg.MaxDuration {
+		// Recording may be ongoing and reach the limit while the stop is delayed.
+		d.cancelPendingStop()
 		d.active = nil
 		d.desireStream(streamWarm)
 		d.muCapture.Unlock()
@@ -196,4 +229,32 @@ func (d *daemon) notifyErr(err error, code, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	d.notify.Error(code, util.UpperFirst(msg))
 	d.log.Printf(msg+": %s", err)
+}
+
+// stopActiveSession detaches the active session and transitions the stream out
+// of recording. The caller must hold d.muCapture and ensure d.active is not nil.
+func (d *daemon) stopActiveSession() *session.Session {
+	s := d.active
+	d.active = nil
+	d.cancelPendingStop()
+	d.desireStream(streamWarm)
+	d.warmTimer.Start()
+	return s
+}
+
+// cancelPendingStop invalidates any delayed stop. The caller must hold
+// d.muCapture.
+func (d *daemon) cancelPendingStop() {
+	if d.stopTimer != nil {
+		d.stopTimer.Stop()
+		d.stopTimer = nil
+	}
+	d.pendingStopClip = 0
+}
+
+func (d *daemon) processStoppedSession(s *session.Session) {
+	if s.Duration() > 0 {
+		d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped", s.ID()))
+	}
+	d.transcribe(s)
 }

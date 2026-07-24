@@ -28,6 +28,8 @@ type Config struct {
 	MinDuration time.Duration `json:"min_duration"`
 	// MaxDuration is the longest active recording duration before automatic stop; zero disables auto-stop.
 	MaxDuration time.Duration `json:"max_duration"`
+	// StopDelay keeps recording briefly after a stop request; zero stops immediately.
+	StopDelay time.Duration `json:"stop_delay"`
 	// WarmRetention is how long the idle daemon keeps the audio stream open; zero closes it immediately.
 	WarmRetention time.Duration `json:"warm_retention"`
 	// TranscriptRetentionWindow retains recent clip IDs; zero disables runtime retention cleanup.
@@ -47,6 +49,10 @@ func DefaultConfig() (Config, error) {
 		return Config{}, err
 	}
 	maxDuration, err := envDuration("TALK2TEXT_MAX_DURATION", 100*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	stopDelay, err := envDuration("TALK2TEXT_STOP_DELAY", 250*time.Millisecond)
 	if err != nil {
 		return Config{}, err
 	}
@@ -70,6 +76,7 @@ func DefaultConfig() (Config, error) {
 		WhisperEndpoint:           defaultWhisperEndpoint,
 		MinDuration:               minDuration,
 		MaxDuration:               maxDuration,
+		StopDelay:                 stopDelay,
 		WarmRetention:             warmRetention,
 		TranscriptRetentionWindow: transcriptRetentionWindow,
 		RecordInputDevice:         os.Getenv("TALK2TEXT_RECORD_INPUT_DEVICE"),
@@ -112,6 +119,9 @@ func ValidateConfig(cfg Config) error {
 		return err
 	}
 	if err := validateConfigDuration("maximum duration", cfg.MaxDuration); err != nil {
+		return err
+	}
+	if err := validateConfigDuration("stop delay", cfg.StopDelay); err != nil {
 		return err
 	}
 	if err := validateConfigDuration("warm retention", cfg.WarmRetention); err != nil {

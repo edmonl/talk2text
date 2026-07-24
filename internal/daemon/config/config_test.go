@@ -60,6 +60,13 @@ func TestValidateConfigReturnsDurationErrors(t *testing.T) {
 			want: "minimum duration must be 0s or at least 10ms",
 		},
 		{
+			name: "negative stop delay",
+			update: func(cfg *Config) {
+				cfg.StopDelay = -time.Second
+			},
+			want: "stop delay must not be negative",
+		},
+		{
 			name: "negative transcript retention window",
 			update: func(cfg *Config) {
 				cfg.TranscriptRetentionWindow = -1
@@ -86,12 +93,27 @@ func TestValidateConfigReturnsDurationErrors(t *testing.T) {
 
 func TestDefaultConfigUsesEnvDuration(t *testing.T) {
 	t.Setenv("TALK2TEXT_MIN_DURATION", "1250ms")
+	t.Setenv("TALK2TEXT_STOP_DELAY", "375ms")
 	cfg, err := DefaultConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.MinDuration != 1250*time.Millisecond {
 		t.Fatalf("MinDuration = %v, want 1.25s", cfg.MinDuration)
+	}
+	if cfg.StopDelay != 375*time.Millisecond {
+		t.Fatalf("StopDelay = %v, want 375ms", cfg.StopDelay)
+	}
+}
+
+func TestDefaultConfigUsesDefaultStopDelay(t *testing.T) {
+	t.Setenv("TALK2TEXT_STOP_DELAY", "")
+	cfg, err := DefaultConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StopDelay != 250*time.Millisecond {
+		t.Fatalf("StopDelay = %v, want 250ms", cfg.StopDelay)
 	}
 }
 

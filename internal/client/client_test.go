@@ -19,6 +19,7 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 			WhisperEndpoint:           "http://127.0.0.1:8080/inference",
 			MinDuration:               500 * time.Millisecond,
 			MaxDuration:               100 * time.Second,
+			StopDelay:                 250 * time.Millisecond,
 			WarmRetention:             15 * time.Second,
 			TranscriptRetentionWindow: 100,
 			WhisperConnectTimeout:     time.Second,
@@ -31,6 +32,7 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 	for _, want := range []string{
 		"min_duration: 500ms",
 		"max_duration: 1m40s",
+		"stop_delay: 250ms",
 		"warm_retention: 15s",
 		"transcript_retention_window: 100",
 		"whisper_connect_timeout: 1s",

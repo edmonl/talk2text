@@ -27,14 +27,18 @@ import (
 )
 
 type fakeAudioStream struct {
-	onPCM    func([]byte)
-	startErr error
-	started  atomic.Bool
-	stopped  atomic.Bool
-	closed   atomic.Bool
+	onPCM     func([]byte)
+	startGate <-chan struct{}
+	startErr  error
+	started   atomic.Bool
+	stopped   atomic.Bool
+	closed    atomic.Bool
 }
 
 func (f *fakeAudioStream) Start() error {
+	if f.startGate != nil {
+		<-f.startGate
+	}
 	f.started.Store(true)
 	return f.startErr
 }
@@ -62,12 +66,6 @@ func fakeFactory(holder *fakeStreamHolder) audiocapture.Factory {
 		stream := &fakeAudioStream{onPCM: cfg.OnPCM}
 		holder.stream.Store(stream)
 		return stream, nil
-	}
-}
-
-func fakeFactoryError(err error) audiocapture.Factory {
-	return func(audiocapture.Config) (audiocapture.Stream, error) {
-		return nil, err
 	}
 }
 
@@ -134,6 +132,7 @@ func TestDaemonStopsStreamBeforeWarmRetentionAndClosesAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.RuntimeDir = run
+	cfg.StopDelay = 0
 	cfg.WarmRetention = 50 * time.Millisecond
 	logger := log.New(&stderr, "talk2text: ", 0)
 	d := &daemon{
@@ -199,14 +198,121 @@ func TestDaemonZeroWarmRetentionStopsWithoutDeadlock(t *testing.T) {
 	}
 }
 
+func TestDaemonStopDelayCapturesTrailingAudio(t *testing.T) {
+	d := newStopDelayTestDaemon(t, 40*time.Millisecond)
+	startDaemon(t, d)
+	d.onAudio([]byte{0, 0})
+
+	d.muCapture.Lock()
+	s := d.active
+	d.muCapture.Unlock()
+	stopDaemon(t, d)
+
+	d.muCapture.Lock()
+	if d.active != s {
+		t.Fatal("stop request detached the session before the delay elapsed")
+	}
+	d.muCapture.Unlock()
+	d.onAudio([]byte{1, 0})
+
+	waitForNoActiveSession(t, d, "recording did not stop after the configured delay")
+	if got, want := s.Duration(), 125*time.Microsecond; got != want {
+		t.Fatalf("captured duration = %v, want %v including trailing audio", got, want)
+	}
+}
+
+func TestDaemonStartDuringStopDelayPreservesNewClip(t *testing.T) {
+	const stopDelay = 40 * time.Millisecond
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run, "out.log")
+	outCmd := filepath.Join(run, "out")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$1\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	d := newStopDelayTestDaemon(t, stopDelay)
+	d.cfg.RuntimeDir = run
+	d.cfg.OutCmd = outCmd
+	startDaemon(t, d)
+	d.onAudio([]byte{0, 0})
+	stopDaemon(t, d)
+	startDaemon(t, d)
+	time.Sleep(2 * stopDelay)
+
+	d.muCapture.Lock()
+	activeClip := 0
+	if d.active != nil {
+		activeClip = d.active.ID()
+	}
+	pendingStopClip := d.pendingStopClip
+	stopTimer := d.stopTimer
+	d.muCapture.Unlock()
+	if activeClip != 2 {
+		t.Fatalf("active clip = %d, want 2 after stale delayed stop", activeClip)
+	}
+	if pendingStopClip != 0 || stopTimer != nil {
+		t.Fatal("old clip's delayed stop was not canceled")
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("pending clip was not processed when the new clip started: %v", err)
+	}
+	if got := strings.TrimSpace(string(raw)); got != "short" {
+		t.Fatalf("processed clip kind = %q, want short", got)
+	}
+}
+
+func TestDaemonRepeatedStopDoesNotExtendDelay(t *testing.T) {
+	d := newStopDelayTestDaemon(t, time.Hour)
+	startDaemon(t, d)
+	stopDaemon(t, d)
+
+	d.muCapture.Lock()
+	firstTimer := d.stopTimer
+	d.muCapture.Unlock()
+	stopDaemon(t, d)
+
+	d.muCapture.Lock()
+	defer d.muCapture.Unlock()
+	if d.stopTimer != firstTimer {
+		t.Fatal("repeated stop replaced and extended the pending timer")
+	}
+}
+
+func TestDaemonMaxDurationCancelsDelayedStop(t *testing.T) {
+	d := newStopDelayTestDaemon(t, time.Hour)
+	d.cfg.MaxDuration = 50 * time.Microsecond
+	startDaemon(t, d)
+	stopDaemon(t, d)
+	d.onAudio([]byte{0, 0})
+
+	d.muCapture.Lock()
+	defer d.muCapture.Unlock()
+	if d.active != nil {
+		t.Fatal("maximum duration did not stop the active session")
+	}
+	if d.pendingStopClip != 0 || d.stopTimer != nil {
+		t.Fatal("maximum duration did not cancel the delayed stop")
+	}
+}
+
 func TestDaemonStartOpenStreamErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	var stderr bytes.Buffer
 	logger := log.New(&stderr, "talk2text: ", 0)
-	cfg := config.Config{}
+	cfg := config.Config{StopDelay: time.Hour}
+	openGate := make(chan struct{})
 	d := &daemon{
-		cfg:      &cfg,
-		log:      logger,
-		newAudio: fakeFactoryError(errors.New("open failed")),
+		cfg: &cfg,
+		log: logger,
+		newAudio: func(audiocapture.Config) (audiocapture.Stream, error) {
+			<-openGate
+			return nil, errors.New("open failed")
+		},
 		notify:   notifier.New(context.Background(), "", logger),
 		nextClip: 1,
 		ctx:      context.Background(),
@@ -219,9 +325,14 @@ func TestDaemonStartOpenStreamErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	if _, ok := <-errChan; ok {
 		t.Fatal("start error channel was not closed")
 	}
+	stopDaemon(t, d)
+	close(openGate)
 	waitForNoActiveSession(t, d, "active session was kept after open stream failure")
 	if !d.muCapture.TryLock() {
 		t.Fatal("capture mutex remained locked after open stream failure")
+	}
+	if d.pendingStopClip != 0 || d.stopTimer != nil {
+		t.Fatal("open stream failure did not cancel the delayed stop")
 	}
 	d.muCapture.Unlock()
 }
@@ -230,7 +341,8 @@ func TestDaemonStartStreamStartErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	var stream fakeStreamHolder
 	var stderr bytes.Buffer
 	logger := log.New(&stderr, "talk2text: ", 0)
-	cfg := config.Config{}
+	cfg := config.Config{StopDelay: time.Hour}
+	startGate := make(chan struct{})
 	d := &daemon{
 		cfg:      &cfg,
 		log:      logger,
@@ -242,15 +354,23 @@ func TestDaemonStartStreamStartErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	startStreamManager(t, d)
 	d.warmTimer = timer.NewCallbackTimer(time.Hour, func() {})
 
-	d.stream = &fakeAudioStream{startErr: errors.New("start failed")}
+	d.stream = &fakeAudioStream{
+		startGate: startGate,
+		startErr:  errors.New("start failed"),
+	}
 	errChan := make(chan error, 1)
 	d.start(errChan)
 	if _, ok := <-errChan; ok {
 		t.Fatal("start error channel was not closed")
 	}
+	stopDaemon(t, d)
+	close(startGate)
 	waitForNoActiveSession(t, d, "active session was kept after stream start failure")
 	if !d.muCapture.TryLock() {
 		t.Fatal("capture mutex remained locked after stream start failure")
+	}
+	if d.pendingStopClip != 0 || d.stopTimer != nil {
+		t.Fatal("stream start failure did not cancel the delayed stop")
 	}
 	d.muCapture.Unlock()
 }
@@ -677,6 +797,29 @@ func TestProcessTranscriptDoesNotStartOutputCommandAfterContextCanceled(t *testi
 
 func shellQuote(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+}
+
+func newStopDelayTestDaemon(t *testing.T, stopDelay time.Duration) *daemon {
+	t.Helper()
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{
+		MinDuration: time.Hour,
+		StopDelay:   stopDelay,
+	}
+	d := &daemon{
+		cfg:      &cfg,
+		log:      logger,
+		ctx:      context.Background(),
+		notify:   notifier.New(context.Background(), "", logger),
+		nextClip: 1,
+	}
+	d.warmTimer = timer.NewCallbackTimer(time.Hour, func() {})
+	t.Cleanup(func() {
+		d.muCapture.Lock()
+		d.cancelPendingStop()
+		d.muCapture.Unlock()
+	})
+	return d
 }
 
 func newTestWarmTimer(d *daemon) timer.Timer {

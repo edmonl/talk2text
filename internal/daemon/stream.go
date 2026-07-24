@@ -103,6 +103,7 @@ func (d *daemon) streamManager() {
 					continue
 				}
 				clipID := d.active.ID()
+				d.cancelPendingStop()
 				d.active = nil
 				d.desiredStreamState = streamOff
 				d.muCapture.Unlock()
@@ -122,6 +123,7 @@ func (d *daemon) streamManager() {
 				continue
 			}
 			clipID := d.active.ID()
+			d.cancelPendingStop()
 			d.active = nil
 			d.desiredStreamState = streamOff
 			d.muCapture.Unlock()
