@@ -79,13 +79,19 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 	if cfg.TranscriptRetentionWindow > 0 {
 		d.protectedTranscripts = make(map[int]struct{})
 	}
-	d.warmTimer = timer.NewCallbackTimer(d.cfg.WarmRetention, func() {
-		d.muCapture.Lock()
-		defer d.muCapture.Unlock()
-		if d.active == nil {
+	if d.cfg.WarmRetention > 0 {
+		d.warmTimer = timer.NewCallbackTimer(d.cfg.WarmRetention, func() {
+			d.muCapture.Lock()
+			defer d.muCapture.Unlock()
+			if d.active == nil {
+				d.desireStream(streamOff)
+			}
+		})
+	} else {
+		d.warmTimer = timer.NewImmediateTimer(func() {
 			d.desireStream(streamOff)
-		}
-	})
+		})
+	}
 	go d.streamManager()
 
 	logger.Printf("daemon starting to listen on %s", socketPath)
@@ -121,12 +127,8 @@ func (d *daemon) stop(errChan chan error) {
 
 	s := d.active
 	d.active = nil
-	if d.cfg.WarmRetention <= 0 {
-		d.desireStream(streamOff)
-	} else {
-		d.desireStream(streamWarm)
-		d.warmTimer.Start()
-	}
+	d.desireStream(streamWarm)
+	d.warmTimer.Start()
 	d.muCapture.Unlock()
 
 	if s != nil {

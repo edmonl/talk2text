@@ -680,6 +680,11 @@ func shellQuote(path string) string {
 }
 
 func newTestWarmTimer(d *daemon) timer.Timer {
+	if d.cfg.WarmRetention <= 0 {
+		return timer.NewImmediateTimer(func() {
+			d.desireStream(streamOff)
+		})
+	}
 	return timer.NewCallbackTimer(d.cfg.WarmRetention, func() {
 		d.muCapture.Lock()
 		defer d.muCapture.Unlock()
