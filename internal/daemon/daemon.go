@@ -202,7 +202,7 @@ func (d *daemon) onAudio(pcm []byte) {
 		d.active = nil
 		d.desireStream(streamWarm)
 		d.muCapture.Unlock()
-		d.log.Printf("failed to write PCM bytes of clip %d: %s", s.ID(), err)
+		d.log.Printf("failed to write PCM bytes of clip %d: %v", s.ID(), err)
 		d.notify.Error("audio-capture", fmt.Sprintf("Failed to record clip %d", s.ID()))
 		return
 	}
@@ -228,7 +228,7 @@ func (d *daemon) onAudio(pcm []byte) {
 func (d *daemon) notifyErr(err error, code, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	d.notify.Error(code, util.UpperFirst(msg))
-	d.log.Printf(msg+": %s", err)
+	d.log.Printf(msg+": %v", err)
 }
 
 // stopActiveSession detaches the active session and transitions the stream out

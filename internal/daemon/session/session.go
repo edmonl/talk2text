@@ -35,7 +35,7 @@ func (s *Session) OnPCM(pcm []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.clear()
-			err = fmt.Errorf("failed to receive pcm data: %s", r)
+			err = fmt.Errorf("failed to receive pcm data: %v", r)
 		}
 	}()
 	delta, err := pcmDuration(pcm)

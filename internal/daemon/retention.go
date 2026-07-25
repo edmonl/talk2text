@@ -42,7 +42,7 @@ func (d *daemon) releaseTranscript(clipID int) {
 	transcriptsDir := runtimedir.TranscriptsDir(d.cfg.RuntimeDir)
 	for _, name := range files {
 		if err := os.Remove(filepath.Join(transcriptsDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			d.log.Printf("failed to prune transcript file %s: %s", name, err)
+			d.log.Printf("failed to prune transcript file %s: %v", name, err)
 		}
 	}
 }
@@ -65,7 +65,7 @@ func (d *daemon) getTranscriptNamesToPrune() []string {
 		files = append(files, name)
 	})
 	if err != nil {
-		d.log.Printf("failed to prune transcripts: %s", err)
+		d.log.Printf("failed to prune transcripts: %v", err)
 	}
 
 	return files

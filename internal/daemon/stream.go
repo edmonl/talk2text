@@ -25,7 +25,7 @@ func (d *daemon) closeStream() {
 	stream := d.stream
 	d.stream = nil
 	if err := stream.Close(); err != nil {
-		d.log.Printf("failed to close audio capture: %s", err)
+		d.log.Printf("failed to close audio capture: %v", err)
 	}
 }
 

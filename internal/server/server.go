@@ -30,8 +30,8 @@ type Handler[StatusType any] interface {
 }
 
 const (
-	maxRequestBytes  = 10
-	requestTimeout = 250 * time.Millisecond
+	maxRequestBytes = 10
+	requestTimeout  = 250 * time.Millisecond
 )
 
 // Serve listens on socketPath and accepts IPC connections until ctx is done.
@@ -77,7 +77,7 @@ func handleConn[StatusType any](ctx context.Context, conn net.Conn, handler Hand
 	defer conn.Close()
 
 	if err := conn.SetReadDeadline(time.Now().Add(requestTimeout)); err != nil {
-		handler.Logger().Printf("failed to set request read deadline: %s", err)
+		handler.Logger().Printf("failed to set request read deadline: %v", err)
 		return
 	}
 	command, err := readCommand(conn)
@@ -87,7 +87,7 @@ func handleConn[StatusType any](ctx context.Context, conn net.Conn, handler Hand
 			return
 		default:
 		}
-		handler.Logger().Printf("failed to read request: %s", err)
+		handler.Logger().Printf("failed to read request: %v", err)
 		return
 	}
 
@@ -108,12 +108,12 @@ func handleConn[StatusType any](ctx context.Context, conn net.Conn, handler Hand
 	}
 
 	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
-		handler.Logger().Printf("failed to set response write deadline: %s", err)
+		handler.Logger().Printf("failed to set response write deadline: %v", err)
 		return
 	}
 	err = json.NewEncoder(conn).Encode(resp)
 	if err != nil {
-		handler.Logger().Printf("failed to write response: %s", err)
+		handler.Logger().Printf("failed to write response: %v", err)
 	}
 }
 

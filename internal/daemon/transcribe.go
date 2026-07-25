@@ -24,7 +24,7 @@ func (d *daemon) transcribe(s *session.Session) {
 		if d.ctx.Err() != nil {
 			return
 		}
-		d.log.Printf("whisper server failed to transcribe clip %d: %s", clipID, err)
+		d.log.Printf("whisper server failed to transcribe clip %d: %v", clipID, err)
 		d.notify.Error("whisper", fmt.Sprintf("Transcribing clip %d failed", clipID))
 		return
 	}
@@ -45,7 +45,7 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 		path, err = runtimedir.WriteTranscript(d.cfg.RuntimeDir, clipID, text)
 		if err != nil {
 			d.unprotectTranscript(clipID)
-			d.log.Printf("failed to write transcript %d: %s", clipID, err)
+			d.log.Printf("failed to write transcript %d: %v", clipID, err)
 			d.notify.Error("runtime", fmt.Sprintf("Output transcript %d failed", clipID))
 			return
 		}
@@ -70,7 +70,7 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		d.log.Printf("failed to start output command for transcript %d: %s", clipID, err)
+		d.log.Printf("failed to start output command for transcript %d: %v", clipID, err)
 		d.notify.Error("output-command", fmt.Sprintf("Processing transcript %d failed", clipID))
 		return
 	}

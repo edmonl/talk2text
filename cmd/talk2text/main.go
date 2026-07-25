@@ -30,7 +30,7 @@ func main() {
 	err := run(os.Args[1:], os.Stdout, os.Stderr, &exitCode)
 	if err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintf(os.Stderr, "talk2text: %s\n", err)
+			fmt.Fprintf(os.Stderr, "talk2text: %v\n", err)
 		}
 		os.Exit(exitCode)
 	}

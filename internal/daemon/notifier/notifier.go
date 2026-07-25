@@ -37,7 +37,7 @@ func (n *Notifier) emit(level, code, message string) {
 		cmd := exec.CommandContext(n.ctx, n.cmd, level, code, message)
 		cmd.Stderr = n.log.Writer()
 		if err := cmd.Start(); err != nil {
-			n.log.Printf("notification command start failed: %s", err)
+			n.log.Printf("notification command start failed: %v", err)
 			return
 		}
 		cmd.Wait()

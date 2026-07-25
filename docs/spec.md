@@ -426,7 +426,7 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 # Future Considerations
 
 1. [HTTP audio submission](spec/http-transcription.md)
-   - Add an optional `POST /transcribe` input so a mobile device can send a WAV clip to the daemon running on a remote editing machine.
+   - Add an optional `POST /transcribe` input so a mobile device can send an AMR-WB clip to the daemon running on a remote editing machine.
    - The standalone future specification defines the intended MVP behavior and its deferred security work.
 
 2. Transcription concurrency limit

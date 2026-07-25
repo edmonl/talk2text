@@ -42,7 +42,7 @@ func Run(command, runtimeDir string, stdout io.Writer) error {
 func sendIPCCommand(runtimeDir, command string) (server.Response[daemon.Status], error) {
 	conn, err := net.DialTimeout("unix", runtimedir.SocketPath(runtimeDir), 250*time.Millisecond)
 	if err != nil {
-		return server.Response[daemon.Status]{}, fmt.Errorf("%w: %s", ErrDaemonUnavailable, err)
+		return server.Response[daemon.Status]{}, fmt.Errorf("%w: %v", ErrDaemonUnavailable, err)
 	}
 	defer conn.Close()
 	if _, sendErr := fmt.Fprintf(conn, "%s\n", command); sendErr != nil {
