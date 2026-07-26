@@ -74,6 +74,7 @@ func printStatus(w io.Writer, resp daemon.Status) {
 		fmt.Fprintf(w, "whisper_endpoint: %s\n", resp.Config.WhisperEndpoint)
 		fmt.Fprintf(w, "out_cmd: %s\n", resp.Config.OutCmd)
 		fmt.Fprintf(w, "notify_cmd: %s\n", resp.Config.NotifyCmd)
+		fmt.Fprintf(w, "http_listen: %s\n", resp.Config.HTTPListen)
 		fmt.Fprintf(w, "min_duration: %s\n", resp.Config.MinDuration)
 		fmt.Fprintf(w, "max_duration: %s\n", resp.Config.MaxDuration)
 		fmt.Fprintf(w, "stop_delay: %s\n", resp.Config.StopDelay)

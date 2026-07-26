@@ -15,7 +15,6 @@ import (
 	"github.com/edmonl/talk2text/internal/daemon/notifier"
 	"github.com/edmonl/talk2text/internal/daemon/session"
 	"github.com/edmonl/talk2text/internal/runtimedir"
-	"github.com/edmonl/talk2text/internal/server"
 	"github.com/edmonl/talk2text/internal/util"
 	"github.com/edmonl/talk2text/internal/util/timer"
 	"github.com/edmonl/talk2text/internal/whisper"
@@ -26,6 +25,7 @@ type daemon struct {
 	cfg       *config.Config
 	log       *log.Logger
 	ctx       context.Context
+	cancel    context.CancelFunc
 	muCapture sync.Mutex
 
 	whisper *whisper.Client
@@ -42,7 +42,10 @@ type daemon struct {
 	nextClip        int
 	stopTimer       timer.Timer
 	pendingStopClip int
-	pending         atomic.Int32
+
+	ongoingTranscriptions atomic.Int32
+	transcriptionIdle     chan struct{}
+	httpAdmitted          atomic.Int32
 
 	muTranscripts                    sync.Mutex
 	transcriptRetentionHighWatermark int
@@ -60,10 +63,14 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	d := &daemon{
-		cfg: &cfg,
-		log: logger,
-		ctx: ctx,
+		cfg:    &cfg,
+		log:    logger,
+		ctx:    ctx,
+		cancel: cancel,
 
 		whisper: whisper.NewClient(whisper.Config{
 			Endpoint:       cfg.WhisperEndpoint,
@@ -77,6 +84,8 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 		streamManagerDone:        make(chan struct{}),
 
 		nextClip: 1,
+
+		transcriptionIdle: make(chan struct{}, 1),
 	}
 	if cfg.TranscriptRetentionWindow > 0 {
 		d.protectedTranscripts = make(map[int]struct{})
@@ -96,14 +105,10 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 	}
 	go d.streamManager()
 
-	logger.Printf("daemon starting to listen on %s", socketPath)
-	if err := server.Serve(ctx, socketPath, d); err != nil {
-		return fmt.Errorf("failed to start daemon on socket %s: %w", socketPath, err)
-	}
-
+	err = d.serve(socketPath)
 	d.shutdown()
 	logger.Print("daemon stopped")
-	return nil
+	return err
 }
 
 func (d *daemon) start(errChan chan error) {

@@ -24,6 +24,8 @@ type Config struct {
 	OutCmd string `json:"out_cmd,omitempty"`
 	// NotifyCmd is an optional command used for user notifications.
 	NotifyCmd string `json:"notify_cmd,omitempty"`
+	// HTTPListen is an optional address for accepting AMR-WB transcription requests.
+	HTTPListen string `json:"http_listen,omitempty"`
 	// MinDuration is the shortest recording duration accepted for transcription; zero accepts every clip.
 	MinDuration time.Duration `json:"min_duration"`
 	// MaxDuration is the longest active recording duration before automatic stop; zero disables auto-stop.
@@ -114,6 +116,9 @@ func envDuration(name string, fallback time.Duration) (time.Duration, error) {
 func ValidateConfig(cfg Config) error {
 	if cfg.WhisperEndpoint == "" {
 		return errors.New("whisper endpoint must not be empty")
+	}
+	if cfg.HTTPListen != "" && cfg.MaxDuration == 0 {
+		return errors.New("maximum duration must be nonzero when HTTP input is enabled")
 	}
 	if err := validateConfigDuration("minimum duration", cfg.MinDuration); err != nil {
 		return err

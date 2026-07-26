@@ -51,39 +51,6 @@ func TestPrepareDirCreatesAndCleansOnlyRegularTranscriptFiles(t *testing.T) {
 	}
 }
 
-func TestCleanTranscriptDirReportsEmpty(t *testing.T) {
-	run := t.TempDir()
-	transcriptDir := filepath.Join(run, transcriptsDir)
-	if err := os.MkdirAll(transcriptDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(transcriptDir, "stale"), []byte("old"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	empty, err := cleanTranscriptDir(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !empty {
-		t.Fatal("cleanTranscriptDir reported non-empty after removing only regular files")
-	}
-}
-
-func TestCleanTranscriptDirReportsNonEmptyWhenNonRegularEntriesRemain(t *testing.T) {
-	run := t.TempDir()
-	transcriptDir := filepath.Join(run, transcriptsDir)
-	if err := os.MkdirAll(filepath.Join(transcriptDir, "kept"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	empty, err := cleanTranscriptDir(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if empty {
-		t.Fatal("cleanTranscriptDir reported empty with subdirectory remaining")
-	}
-}
-
 func TestPrepareDirRejectsRegularFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {

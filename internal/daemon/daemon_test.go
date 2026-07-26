@@ -746,8 +746,8 @@ func TestTranscribeDoesNotReportWhisperErrorWhenContextCanceled(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("transcribe did not return after context cancellation")
 	}
-	if d.pending.Load() != 0 {
-		t.Fatalf("pending transcriptions = %d, want 0", d.pending.Load())
+	if d.ongoingTranscriptions.Load() != 0 {
+		t.Fatalf("ongoing transcriptions = %d, want 0", d.ongoingTranscriptions.Load())
 	}
 	if strings.Contains(stderr.String(), "whisper server failed") {
 		t.Fatalf("canceled transcription was logged as Whisper failure:\n%s", stderr.String())

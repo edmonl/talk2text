@@ -1,6 +1,6 @@
 # HTTP Audio Submission
 
-This document specifies a future HTTP input for `talk2text`. It is not part of the current daemon behavior.
+This document specifies the optional HTTP input for `talk2text`.
 
 ## Goal
 
@@ -14,7 +14,9 @@ The HTTP input supplements local microphone capture. It does not replace the exi
 
 ## Availability
 
-The HTTP listener should be optional and disabled by default. The user must explicitly configure a listen address when starting the daemon.
+The HTTP listener is optional and disabled by default. The user enables it with `--http-listen <address>` when starting the daemon.
+
+HTTP input requires a nonzero configured maximum clip duration. The daemon should reject startup when HTTP input is enabled while `TALK2TEXT_MAX_DURATION` is `0s`, because an unlimited duration cannot provide safe encoded-body and decoded-audio bounds.
 
 The MVP does not provide HTTP authentication or TLS. It is intended to listen only on a trusted private network address or behind a user-managed encrypted tunnel. It should not be exposed directly to an untrusted network. Authentication and transport security remain future work.
 
@@ -35,7 +37,7 @@ The request must contain an AMR-WB storage-format stream. The daemon should deco
 
 Malformed AMR-WB data and unsupported audio formats should be rejected without allocating a clip ID or invoking the output command.
 
-The daemon should limit the encoded request body according to the configured maximum clip duration and should also reject decoded audio that exceeds that duration. A body that exceeds the permitted size should be rejected without reading an unbounded amount of data into memory.
+The daemon should limit the encoded request body according to the configured maximum clip duration and should also reject decoded audio that exceeds that duration. Each AMR-WB frame represents 20 ms and occupies at most 61 encoded bytes including its frame header, so the maximum request body is the nine-byte storage header plus 61 bytes for each permitted frame. Frame count must also be limited before allocating decoded PCM because valid frames can be as small as one encoded byte. A body that exceeds the permitted size should be rejected without reading an unbounded amount of data into memory.
 
 ## AMR-WB Decoder
 

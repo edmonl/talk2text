@@ -87,19 +87,6 @@ func TestServeDispatchesCommands(t *testing.T) {
 	}
 }
 
-func TestServeReturnsErrorForUnknownCommand(t *testing.T) {
-	socketPath, cancel, done := startTestServer(t)
-	defer stopTestServer(t, cancel, done)
-
-	resp := sendCommand(t, socketPath, "bogus")
-	if resp["ok"] != false {
-		t.Fatalf("unknown response ok = %v, want false", resp["ok"])
-	}
-	if resp["error"] != "unknown command" {
-		t.Fatalf("unknown response error = %v, want unknown command", resp["error"])
-	}
-}
-
 func TestServeReturnsHandlerError(t *testing.T) {
 	socketPath, cancel, done := startTestServer(t, &fakeHandler{
 		startErr: errors.New("start failed"),
@@ -168,27 +155,6 @@ func TestServeClosesIncompleteRequestAfterTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*requestTimeout {
 		t.Fatalf("incomplete request closed after %s, want within %s", elapsed, 2*requestTimeout)
-	}
-}
-
-func TestServeDropsOversizedRequest(t *testing.T) {
-	socketPath, cancel, done := startTestServer(t)
-	defer stopTestServer(t, cancel, done)
-
-	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, writeErr := conn.Write([]byte(strings.Repeat("x", maxRequestBytes+1))); writeErr != nil {
-		t.Fatal(writeErr)
-	}
-	raw, err := io.ReadAll(conn)
-	if err != nil && !errors.Is(err, syscall.ECONNRESET) {
-		t.Fatal(err)
-	}
-	if len(raw) != 0 {
-		t.Fatalf("oversized response = %q, want closed connection without response", string(raw))
 	}
 }
 

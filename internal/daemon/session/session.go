@@ -11,12 +11,31 @@ import (
 
 type Session struct {
 	id       int
-	buffer   bytes.Buffer
+	buffer   *bytes.Buffer
 	duration time.Duration
 }
 
+// NewSession creates an empty session.
 func NewSession(id int) *Session {
-	return &Session{id: id}
+	return &Session{
+		id:     id,
+		buffer: &bytes.Buffer{},
+	}
+}
+
+// NewSessionWithPCM creates a session backed by pcm. The caller must not
+// modify a non-nil pcm slice after passing it to NewSessionWithPCM.
+func NewSessionWithPCM(id int, pcm []byte) (*Session, error) {
+	duration, err := pcmDuration(pcm)
+	if err != nil {
+		return nil, err
+	}
+	s := NewSession(id)
+	if pcm != nil {
+		s.buffer = bytes.NewBuffer(pcm)
+	}
+	s.duration = duration
+	return s, nil
 }
 
 func (s *Session) ID() int {
@@ -50,7 +69,7 @@ func (s *Session) OnPCM(pcm []byte) (err error) {
 }
 
 func (s *Session) clear() {
-	s.buffer = bytes.Buffer{}
+	s.buffer = &bytes.Buffer{}
 	s.duration = 0
 }
 

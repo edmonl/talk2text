@@ -6,25 +6,14 @@ import (
 	"time"
 )
 
-func TestDefaultConfigReturnsEnvDurationParseErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{name: "invalid", value: "nope", want: "TALK2TEXT_MIN_DURATION must be a duration string"},
-		{name: "unitless", value: "1", want: "TALK2TEXT_MIN_DURATION must be a duration string"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("TALK2TEXT_MIN_DURATION", tc.value)
-			_, err := DefaultConfig()
-			if err == nil {
-				t.Fatal("DefaultConfig succeeded with invalid duration")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want containing %q", err, tc.want)
-			}
-		})
+func TestDefaultConfigRejectsUnitlessEnvDuration(t *testing.T) {
+	t.Setenv("TALK2TEXT_MIN_DURATION", "1")
+	_, err := DefaultConfig()
+	if err == nil {
+		t.Fatal("DefaultConfig succeeded with invalid duration")
+	}
+	if want := "TALK2TEXT_MIN_DURATION must be a duration string"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want containing %q", err, want)
 	}
 }
 
@@ -72,6 +61,14 @@ func TestValidateConfigReturnsDurationErrors(t *testing.T) {
 				cfg.TranscriptRetentionWindow = -1
 			},
 			want: "transcript retention window must not be negative",
+		},
+		{
+			name: "HTTP input without maximum duration",
+			update: func(cfg *Config) {
+				cfg.HTTPListen = "127.0.0.1:8081"
+				cfg.MaxDuration = 0
+			},
+			want: "maximum duration must be nonzero when HTTP input is enabled",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

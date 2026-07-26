@@ -80,6 +80,7 @@ func TestParseDaemonFlags(t *testing.T) {
 		"--whisper-endpoint", "http://127.0.0.1:9090/inference",
 		"--out-cmd", "/tmp/out",
 		"--notify-cmd", "/tmp/notify",
+		"--http-listen", "127.0.0.1:8081",
 	}, flags.NewDaemonFlags(&cfg, io.Discard), &exitCode)
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +96,9 @@ func TestParseDaemonFlags(t *testing.T) {
 	}
 	if cfg.NotifyCmd != "/tmp/notify" {
 		t.Fatalf("NotifyCmd = %q", cfg.NotifyCmd)
+	}
+	if cfg.HTTPListen != "127.0.0.1:8081" {
+		t.Fatalf("HTTPListen = %q", cfg.HTTPListen)
 	}
 }
 

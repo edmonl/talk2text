@@ -9,17 +9,31 @@ import (
 	"github.com/edmonl/talk2text/internal/runtimedir"
 )
 
+func (d *daemon) isShortSession(s *session.Session) bool {
+	return s.Duration() <= 0 || d.cfg.MinDuration > 0 && s.Duration() < d.cfg.MinDuration
+}
+
 func (d *daemon) transcribe(s *session.Session) {
-	clipID := s.ID()
-	if s.Duration() <= 0 || d.cfg.MinDuration > 0 && s.Duration() < d.cfg.MinDuration {
-		d.processTranscript(clipID, "", false)
+	if d.isShortSession(s) {
+		d.processTranscript(s.ID(), "", false)
 		return
 	}
+	d.ongoingTranscriptions.Add(1)
+	d.processLongSession(s)
+}
+
+func (d *daemon) processLongSession(s *session.Session) {
+	clipID := s.ID()
 
 	d.notify.Info("transcribe-start", fmt.Sprintf("Transcribing clip %d", clipID))
-	d.pending.Add(1)
 	text, err := d.whisper.Transcribe(d.ctx, clipID, s.PCM(), d.cfg.RuntimeDir)
-	d.pending.Add(-1)
+	if d.ongoingTranscriptions.Add(-1) <= 0 {
+		select {
+		case d.transcriptionIdle <- struct{}{}:
+		default:
+		}
+	}
+
 	if err != nil {
 		if d.ctx.Err() != nil {
 			return

@@ -124,6 +124,7 @@ There is currently no configuration file. Common settings are daemon flags:
 | `--whisper-endpoint URL` | `http://127.0.0.1:8080/inference` | Whisper-compatible inference endpoint |
 | `--out-cmd PATH` | disabled | Executable that consumes completed transcripts |
 | `--notify-cmd PATH` | disabled | Executable that displays lifecycle and error notifications |
+| `--http-listen ADDRESS` | disabled | Listen for AMR-WB audio submission over HTTP |
 | `--runtime-dir PATH` | discovered automatically | Directory containing the socket, prompt, and transcripts |
 
 Lower-level settings are environment variables read when the daemon starts:
@@ -153,6 +154,27 @@ talk2text daemon --whisper-endpoint http://127.0.0.1:8080/inference
 The daemon acknowledges `stop` immediately but continues collecting audio for the stop delay. If a new `start` arrives during that window, the daemon finishes the previous clip immediately and starts a new clip; the old delayed stop cannot stop the new recording.
 
 If you use `--runtime-dir`, pass the same option to `start`, `stop`, and `status` so that they connect to the same daemon.
+
+## HTTP Audio Submission
+
+Enable the optional HTTP listener with a trusted private-network address or an encrypted tunnel:
+
+```sh
+talk2text daemon --http-listen 127.0.0.1:8081
+```
+
+Submit a single-channel AMR-WB storage-format stream:
+
+```sh
+curl --fail-with-body \
+  -H 'Content-Type: audio/amr-wb' \
+  --data-binary @recording.amr \
+  http://127.0.0.1:8081/transcribe
+```
+
+An accepted request returns `202 Accepted` and a daemon-local clip ID. Transcription continues asynchronously through the same Whisper, transcript, output-command, notification, and retention pipeline used by local recordings.
+
+The listener does not provide authentication or TLS and should not be exposed directly to an untrusted network. HTTP input requires a nonzero `TALK2TEXT_MAX_DURATION`.
 
 ## Whisper Server
 

@@ -17,6 +17,7 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 		Config: &config.Config{
 			RuntimeDir:                "/tmp/talk2text-test",
 			WhisperEndpoint:           "http://127.0.0.1:8080/inference",
+			HTTPListen:                "127.0.0.1:8081",
 			MinDuration:               500 * time.Millisecond,
 			MaxDuration:               100 * time.Second,
 			StopDelay:                 250 * time.Millisecond,
@@ -31,6 +32,7 @@ func TestPrintStatusFormatsDurations(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		"min_duration: 500ms",
+		"http_listen: 127.0.0.1:8081",
 		"max_duration: 1m40s",
 		"stop_delay: 250ms",
 		"warm_retention: 15s",

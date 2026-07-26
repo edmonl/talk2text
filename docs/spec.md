@@ -70,6 +70,12 @@ The daemon command-line options should include:
    - Notification command path.
    - Passed as `--notify-cmd`.
 
+4. HTTP listen address
+   - Optional TCP listen address for AMR-WB audio submission.
+   - Passed as `--http-listen`.
+   - Disabled by default.
+   - Requires a nonzero `TALK2TEXT_MAX_DURATION`.
+
 Daemon and client subcommands should both accept:
 
 1. Runtime directory
