@@ -1,6 +1,6 @@
 # HTTP Audio Submission
 
-This document specifies the optional HTTP input for `talk2text`.
+This document specifies the implemented optional HTTP input for `talk2text`.
 
 ## Goal
 
@@ -18,7 +18,7 @@ The HTTP listener is optional and disabled by default. The user enables it with 
 
 HTTP input requires a nonzero configured maximum clip duration. The daemon should reject startup when HTTP input is enabled while `TALK2TEXT_MAX_DURATION` is `0s`, because an unlimited duration cannot provide safe encoded-body and decoded-audio bounds.
 
-The MVP does not provide HTTP authentication or TLS. It is intended to listen only on a trusted private network address or behind a user-managed encrypted tunnel. It should not be exposed directly to an untrusted network. Authentication and transport security remain future work.
+The listener does not provide HTTP authentication or TLS. It is intended to listen only on a trusted private network address or behind a user-managed encrypted tunnel. It should not be exposed directly to an untrusted network.
 
 ## Request
 
@@ -41,9 +41,9 @@ The daemon should limit the encoded request body according to the configured max
 
 ## AMR-WB Decoder
 
-The implementation should vendor only the AMR-WB decoder sources from a pinned upstream OpenCORE AMR release.
+The implementation vendors only the AMR-WB decoder sources from the pinned OpenCORE AMR `0.1.6` release.
 
-A small internal cgo wrapper should expose decoder initialization, single-frame decoding, and cleanup. Go code should validate the AMR-WB storage-format header and frames, manage decoder lifetime, and collect the decoded PCM.
+A small internal cgo wrapper exposes decoder initialization, single-frame decoding, and cleanup. Go code validates the AMR-WB storage-format header and frames, manages decoder lifetime, and collects the decoded PCM.
 
 Vendored upstream files should remain isolated from project-owned code. Their license and attribution notices must be preserved, and any local modifications should be kept minimal and clearly identified.
 
@@ -83,7 +83,7 @@ HTTP requests may be read, validated, and decoded concurrently, but their Whispe
 
 Before starting its Whisper request, an HTTP submission should wait while any transcription from local microphone capture is already in flight. This is not an exclusive global transcription lock: a local transcription that starts after the HTTP transcription has begun may run concurrently with it. Output processing is not part of the HTTP transcription serialization and follows the existing concurrency behavior.
 
-## Future Extensions
+## Possible Extensions
 
 Possible later extensions include:
 

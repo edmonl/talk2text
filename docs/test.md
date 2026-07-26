@@ -25,7 +25,7 @@ Goal: confirm the intended mobile device can submit AMR-WB audio over the real p
 
 Steps:
 
-1. Start the daemon with `--http-listen` bound to the intended trusted-network address and a temporary runtime directory.
+1. Start the daemon with `--http-listen` bound to the intended trusted-network address, a nonzero `TALK2TEXT_MAX_DURATION`, a temporary runtime directory, and the actual Whisper endpoint.
 2. Capture or select a valid single-channel AMR-WB storage-format recording on the remote device.
 3. Submit it to `POST /transcribe` with `Content-Type: audio/amr-wb`.
 4. Confirm the response is `202 Accepted` with a clip ID.

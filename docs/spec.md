@@ -1,15 +1,15 @@
 # Goal
 
-`talk2text` is a minimal push-to-talk speech-to-text tool for Linux desktops.
+`talk2text` is a minimal speech-to-text tool for Linux desktops with local push-to-talk capture and optional HTTP audio submission.
 
-While the record key is held, the microphone is recorded. When the key is released, recording stops. Usable clips are sent to the configured Whisper-compatible HTTP endpoint, and the returned text is written to a per-clip transcript file.
+While the record key is held, the microphone is recorded. When the key is released, recording stops. The daemon can also accept AMR-WB clips through an optional HTTP listener. Usable clips from either input are sent to the configured Whisper-compatible HTTP endpoint, and the returned text is written to a per-clip transcript file.
 
 The intended runtime is a single `talk2text` executable with:
 
 1. A long-running `daemon` mode.
 2. Short-lived client subcommands for desktop shortcuts.
 
-The daemon handles recording over IPC and keeps the microphone stream warm for a short idle window after each recording so repeated dictation has low key-press latency.
+The daemon handles local recording over IPC, optional HTTP audio submission, and the shared transcription/output pipeline. It keeps the microphone stream warm for a short idle window after each local recording so repeated dictation has low key-press latency.
 
 # Runtime Model
 
@@ -20,7 +20,7 @@ The runtime is split into:
 1. `talk2text daemon`
    - Long-running daemon mode of the `talk2text` executable.
    - Owns audio capture, transcription, transcript file creation, output command execution, notifications, and runtime state.
-   - Listens on a Unix socket under the runtime directory.
+   - Listens on a Unix socket under the runtime directory and, when configured, on a TCP address for HTTP audio submission.
    - Started by the user's preferred session startup mechanism.
 
 2. `talk2text` client subcommands
@@ -30,7 +30,7 @@ The runtime is split into:
 
 3. Whisper-compatible HTTP endpoint
    - External service, not managed by this project.
-   - Receives recorded clips and returns transcription responses.
+   - Receives accepted clips from the daemon and returns transcription responses.
 
 ## Portability Boundary
 
@@ -44,7 +44,8 @@ The daemon core should only depend on portable Linux concepts and project interf
 6. Transcript file creation.
 7. Output command execution.
 8. External notification command execution.
-9. Configuration and logs.
+9. Optional HTTP audio input and AMR-WB decoding.
+10. Configuration and logs.
 
 The daemon core should not directly depend on a specific window manager, terminal emulator, clipboard command, editor, notification command, or Linux distribution.
 
@@ -90,7 +91,7 @@ Environment variables should configure lower-level tuning that does not need to 
 
 1. Recording behavior
    - `TALK2TEXT_MIN_DURATION`: minimum accepted duration, default `500ms`.
-   - `TALK2TEXT_MAX_DURATION`: maximum recording duration, default `100s`.
+   - `TALK2TEXT_MAX_DURATION`: maximum local recording and HTTP submission duration, default `100s`; `0s` disables local auto-stop and cannot be used with HTTP input.
    - `TALK2TEXT_STOP_DELAY`: duration to keep recording after an accepted stop command, default `250ms`.
    - `TALK2TEXT_WARM_RETENTION`: warm retention window, default `15s`.
 
@@ -102,7 +103,7 @@ Environment variables should configure lower-level tuning that does not need to 
 
 4. Whisper request behavior
    - `TALK2TEXT_WHISPER_CONNECT_TIMEOUT`: connect timeout, default `1s`.
-   - `TALK2TEXT_WHISPER_REQUEST_TIMEOUT`: request timeout after recording has stopped and the Whisper HTTP request has started, default `10s`.
+   - `TALK2TEXT_WHISPER_REQUEST_TIMEOUT`: request timeout after the Whisper HTTP request has started, default `10s`.
 
 ## Runtime Directory
 
@@ -161,7 +162,7 @@ The intended `talk2text` executable supports:
    - Should include recording state: `off`, `active`, or `warm`.
    - Should include the next daemon-local clip ID.
    - Should include the active clip ID when recording.
-   - Should include the number of transcription requests that have been sent to the Whisper endpoint and are still waiting for responses.
+   - Should include the number of local and HTTP transcription requests that have been sent to the Whisper endpoint and are still waiting for responses.
    - Should include the daemon's runtime directory.
    - Should include the daemon's effective configuration from command-line options, environment variables, and defaults.
 
@@ -221,6 +222,10 @@ Client subcommands should use these exit codes:
 
 When the daemon is unavailable, client subcommands should print a short error message to stderr and exit with code `3`.
 
+# HTTP Audio Submission
+
+The daemon can accept AMR-WB clips through an optional `POST /transcribe` HTTP endpoint. This input is disabled by default and does not replace or control local microphone capture. Its request format, admission limits, clip lifecycle, response contract, and security constraints are specified in [spec/http-transcription.md](spec/http-transcription.md).
+
 # Audio Capture
 
 The daemon records audio directly in-process without spawning `ffmpeg` for normal recording. The Go audio package choice is documented in [ADR 0001](decisions/0001-use-malgo-for-audio-capture.md).
@@ -252,13 +257,15 @@ This provides faster repeated recording without keeping the microphone open all 
 
 # Recording and Clip Lifecycle
 
-The clip ID is a daemon-local sequence number that starts at `1` on daemon startup. Every accepted `start` consumes one clip ID, even if the clip is later short, discarded, failed, or auto-stopped. The transcript file path uses that sequence number, such as `<runtime_dir>/transcripts/<seq>`. The daemon may truncate and overwrite stale transcript files from a previous daemon process.
+The clip ID is a daemon-local sequence number that starts at `1` on daemon startup. Every accepted `start` and every accepted HTTP submission consumes one clip ID, even if the clip is later short, discarded, failed, or auto-stopped. Rejected HTTP requests do not consume a clip ID. The transcript file path uses that sequence number, such as `<runtime_dir>/transcripts/<seq>`. The daemon may truncate and overwrite stale transcript files from a previous daemon process.
 
 ## Concurrency
 
 Recording is sequential: the daemon has at most one active recording session at a time.
 
-Transcription and output processing may run concurrently for multiple stopped clips. The daemon does not serialize transcription or output command execution by clip ID. There is no explicit transcription concurrency limit for now. Completion order does not need to match clip sequence order.
+Local microphone transcriptions and output processing may run concurrently for multiple clips. The daemon does not serialize them by clip ID, and completion order does not need to match clip sequence order.
+
+HTTP submissions use bounded admission and serialize their Whisper requests. An HTTP submission waits for local transcriptions that were already in flight, but a local transcription that starts after an HTTP Whisper request may run concurrently with it. There is no exclusive global transcription lock or global concurrency limit. The complete HTTP concurrency contract is specified in [spec/http-transcription.md](spec/http-transcription.md).
 
 ## Start
 
@@ -291,10 +298,10 @@ Maximum recording duration is a coarse safety cutoff, not a user-visible precisi
 
 ## Clip Classification
 
-Each stopped clip is classified into one output kind:
+Each local or HTTP clip that enters processing is classified into one output kind:
 
 1. `short`
-   - The captured PCM duration was shorter than the configured minimum duration.
+   - The captured or decoded PCM duration was shorter than the configured minimum duration.
    - The clip is not sent for transcription.
    - The output text is empty.
 
@@ -312,10 +319,10 @@ When no output command is configured, non-empty output text should still be writ
 
 ## Transcription
 
-For clips with captured PCM duration at or above the configured minimum duration, the daemon:
+For clips with captured or decoded PCM duration at or above the configured minimum duration, the daemon:
 
-1. Encodes the clip as WAV data in memory.
-2. Emits an informational `record-stop` notification when recording stopped normally and a `record-start` notification was emitted for the clip.
+1. For a local recording that stopped normally, emits an informational `record-stop` notification when a `record-start` notification was emitted for the clip.
+2. Encodes the PCM clip as WAV data in memory.
 3. Emits an informational `transcribe-start` notification.
 4. Sends a Whisper HTTP `POST` request to the configured endpoint using multipart form data.
 5. Uploads the in-memory WAV data.
@@ -324,7 +331,7 @@ For clips with captured PCM duration at or above the configured minimum duration
 8. Reads response text from `.text`.
 9. Cleans repeated whitespace from the response text.
 
-Recording time is not part of the Whisper request timeout. The request timeout starts after recording has stopped and the Whisper HTTP request has started.
+Local recording time and HTTP upload time are not part of the Whisper request timeout. The request timeout starts when the Whisper HTTP request starts.
 
 If `transcription-prompt` does not exist, the daemon sends no prompt. If `transcription-prompt` exists but cannot be read, the daemon should log the failure, emit an error notification, and fail transcription for that clip without invoking the output command.
 
@@ -404,25 +411,26 @@ The daemon expects a Whisper-compatible HTTP endpoint at `http://127.0.0.1:8080/
 
 # Installation and Dependencies
 
-This project has trivial installation requirements: build the `talk2text` executable and place it somewhere on `PATH`.
+Build the `talk2text` executable and place it somewhere on `PATH`.
 
-The daemon/client runtime expects:
+The daemon/client runtime requires:
 
 1. `talk2text`
 2. an external Whisper-compatible HTTP endpoint
-3. a Linux audio stack supported by the selected Go audio backend
 
-Building `talk2text` requires Go.
+Local microphone capture additionally requires a Linux audio stack supported by the selected Go audio backend. HTTP-only submission does not require a working microphone.
+
+Building `talk2text` requires Go 1.26 and a C toolchain for cgo. The audio backend and vendored AMR-WB decoder do not require separate development headers.
 
 # Shutdown
 
 On SIGINT or SIGTERM, the daemon should shut down promptly:
 
-1. Stop accepting new IPC connections.
-2. Close the Unix socket listener.
+1. Stop accepting new Unix-socket and HTTP connections.
+2. Close the Unix socket listener and the optional HTTP listener.
 3. Remove `daemon.sock`.
 4. Discard any active recording without transcription.
-5. Cancel or abandon in-flight transcription work.
+5. Cancel or abandon admitted HTTP submissions and in-flight transcription work.
 6. Stop waiting for any already-started output commands without intentionally killing them. Notification commands may be tied to daemon shutdown and may be killed.
 7. Close the microphone stream and any other owned resources.
 8. Exit without waiting for graceful completion of transcription or output work.
@@ -431,10 +439,6 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 
 # Future Considerations
 
-1. [HTTP audio submission](spec/http-transcription.md)
-   - Add an optional `POST /transcribe` input so a mobile device can send an AMR-WB clip to the daemon running on a remote editing machine.
-   - The standalone future specification defines the intended MVP behavior and its deferred security work.
-
-2. Transcription concurrency limit
-   - The initial implementation has no explicit concurrency limit because recording is sequential.
-   - If repeated valid recordings can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
+1. Global transcription concurrency limit
+   - HTTP submissions have bounded admission and serialized Whisper requests, but local transcriptions are not globally limited and may overlap an HTTP transcription.
+   - If combined local and HTTP input can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.

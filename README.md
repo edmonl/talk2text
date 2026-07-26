@@ -1,12 +1,13 @@
 ## Overview
 
-`talk2text` is a minimalist push-to-talk speech-to-text tool for Linux desktops. Hold a configured key to record, release it to stop, and send the audio to a Whisper-compatible HTTP server. The transcript can then be copied to the clipboard or handled by any executable you choose.
+`talk2text` is a minimalist speech-to-text tool for Linux desktops. Hold a configured key to record locally, or submit AMR-WB audio through the optional HTTP input. Usable audio is sent to a Whisper-compatible HTTP server, and the transcript can then be copied to the clipboard or handled by any executable you choose.
 
 The project consists of one executable running as either a daemon or short-lived client commands designed for desktop key bindings:
 
 ```text
 key press    -> talk2text start -> record microphone
 key release  -> talk2text stop  -> transcribe -> run output command
+mobile audio -> POST /transcribe -> transcribe -> run output command
 ```
 
 The daemon keeps the microphone stream open briefly after each recording so repeated recording starts quickly. Desktop-specific behavior can be configured as external commands for handling transcripts and notifications.
@@ -68,7 +69,7 @@ On Fedora:
 sudo dnf install gcc
 ```
 
-At runtime, Linux must provide a working microphone through an audio system supported by miniaudio, such as PipeWire, PulseAudio, ALSA, or JACK.
+Local microphone capture requires a working Linux audio system supported by miniaudio, such as PipeWire, PulseAudio, ALSA, or JACK.
 
 ### Install With Go
 
@@ -132,7 +133,7 @@ Lower-level settings are environment variables read when the daemon starts:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TALK2TEXT_MIN_DURATION` | `500ms` | Clips shorter than this are classified as `short` and are not transcribed; `0s` accepts every non-empty clip |
-| `TALK2TEXT_MAX_DURATION` | `100s` | Automatically stop a recording after this duration; `0s` disables the limit |
+| `TALK2TEXT_MAX_DURATION` | `100s` | Limit local recordings and HTTP submissions; `0s` disables local auto-stop and cannot be used with HTTP input |
 | `TALK2TEXT_STOP_DELAY` | `250ms` | Continue recording briefly after a stop request so the end of speech is not clipped; `0s` stops immediately |
 | `TALK2TEXT_WARM_RETENTION` | `15s` | Keep the microphone stream open after a clip for faster repeated dictation; `0s` closes it immediately |
 | `TALK2TEXT_TRANSCRIPT_RETENTION_WINDOW` | `100` | Retain transcript files from this many recent clip IDs; `0` disables runtime pruning |
@@ -174,13 +175,15 @@ curl --fail-with-body \
 
 An accepted request returns `202 Accepted` and a daemon-local clip ID. Transcription continues asynchronously through the same Whisper, transcript, output-command, notification, and retention pipeline used by local recordings.
 
-The listener does not provide authentication or TLS and should not be exposed directly to an untrusted network. HTTP input requires a nonzero `TALK2TEXT_MAX_DURATION`.
+Malformed or unsupported requests are rejected before a clip ID is allocated. HTTP Whisper requests run one at a time, and the daemon returns `503 Service Unavailable` without reading the body when two submissions are already being admitted or waiting to start.
+
+The listener does not provide authentication or TLS and should not be exposed directly to an untrusted network. HTTP input requires a nonzero `TALK2TEXT_MAX_DURATION`, which bounds both the encoded AMR-WB body and decoded PCM duration.
 
 ## Whisper Server
 
 The Whisper server is external to `talk2text` and must be started separately. It must accept a multipart WAV upload and return JSON containing a `text` field.
 
-Recordings are sent as signed 16-bit mono PCM WAV audio at 16 kHz. Requests also specify JSON response format and may include the transcription prompt described below.
+Clips are sent as signed 16-bit mono PCM WAV audio at 16 kHz. Requests also specify JSON response format and may include the transcription prompt described below.
 
 ## Transcription Prompt
 
@@ -208,9 +211,9 @@ The file is read again for every transcription, so it can be changed without res
 | --- | --- |
 | `text` | Whisper returned non-empty transcript text |
 | `blank` | Whisper returned empty text or `[BLANK_AUDIO]` |
-| `short` | The recording did not reach the minimum duration and was not sent to Whisper |
+| `short` | The clip did not reach the minimum duration and was not sent to Whisper |
 
-The transcript path points to an owner-only file. It contains cleaned text for `text` and is empty for `blank` or `short`. Output commands may run concurrently and may complete in a different order from the recordings.
+The transcript path points to an owner-only file. It contains cleaned text for `text` and is empty for `blank` or `short`. Output commands may run concurrently and may complete in a different order from the clips.
 
 The output command is responsible for removing the transcript file after successful processing. If it delegates work to another process, it must delay removal until that process has finished reading the file. The included [`talk2text-copy-clipboard`](docs/examples/talk2text-copy-clipboard) command demonstrates this contract.
 
@@ -244,12 +247,12 @@ It contains:
 
 Directories and transcript files created by `talk2text` use owner-only permissions. The daemon prunes files outside the configured retention window and removes stale regular transcript files when it next starts.
 
-Audio recordings are held in memory and sent to the configured Whisper endpoint. Transcript files can contain sensitive text, so output commands should remove successfully consumed files promptly.
+Local recordings, uploaded AMR-WB bodies, and decoded HTTP audio are held in memory and are not written as temporary audio files. Transcript files can contain sensitive text, so output commands should remove successfully consumed files promptly.
 
 ## Commands
 
 ```text
-talk2text daemon   run the long-lived recorder daemon
+talk2text daemon   run the long-lived speech-to-text daemon
 talk2text start    begin recording; replaces any active recording
 talk2text stop     stop and process the active recording; no-op when idle
 talk2text status   print daemon state and effective configuration
@@ -264,8 +267,9 @@ Run `talk2text -help` or `talk2text <subcommand> -help` for CLI help.
 1. If a client reports `daemon unavailable`, start `talk2text daemon` and make sure the daemon and client use the same runtime directory and environment.
 2. If the clipboard does not update, run the daemon in a terminal and inspect stderr. Confirm that one of `wl-copy`, `xclip`, or `xsel` is installed and usable in the graphical session.
 3. If transcription fails, confirm the Whisper endpoint is reachable and returns a JSON response with a `text` field. Connection and response details are written to the daemon's stderr.
-4. If short recordings disappear, remember that the default minimum duration is `500ms`. Lower `TALK2TEXT_MIN_DURATION` if needed.
+4. If short clips disappear, remember that the default minimum duration is `500ms`. Lower `TALK2TEXT_MIN_DURATION` if needed.
 5. If microphone capture fails, verify the desktop session can record audio. `TALK2TEXT_RECORD_INPUT_DEVICE`, when set, must exactly match a miniaudio device name or ID.
+6. If the HTTP listener does not start, confirm `--http-listen` is a valid available address and `TALK2TEXT_MAX_DURATION` is nonzero.
 
 ## Contributing
 
