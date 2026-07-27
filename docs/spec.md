@@ -442,3 +442,8 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 1. Global transcription concurrency limit
    - HTTP submissions have bounded admission and serialized Whisper requests, but local transcriptions are not globally limited and may overlap an HTTP transcription.
    - If combined local and HTTP input can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
+
+2. Request environment and output routing
+   - Preserve the originating graphical environment for local recordings owned by one of multiple concurrent user sessions.
+   - Allow sessionless HTTP submissions to select abstract output handling without supplying graphical environment variables.
+   - The proposed behavior is specified in [spec/request-environment.md](spec/request-environment.md).
