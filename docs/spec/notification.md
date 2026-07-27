@@ -33,13 +33,15 @@ Notification messages should start with an uppercase letter.
 
 Clip-specific notification messages, including both informational and error notifications, should include the daemon-local clip ID.
 
-For `info` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the lifecycle event. Event codes are:
+For `info` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the lifecycle event. Daemon lifecycle event codes include:
 
 1. `record-start`
 2. `record-stop`
 3. `transcribe-start`
 4. `transcribe-stop`
 5. `output-start`
+
+Other notification producers may define stable integration-specific informational codes. The daemon lifecycle list is not an exhaustive list of codes that a notification command may receive.
 
 For `error` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the error source, such as `config`, `runtime`, `audio-capture`, `whisper`, or `output-command`. IPC request errors are returned to the client and should not emit user notifications.
 
