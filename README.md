@@ -202,10 +202,10 @@ The file is read again for every transcription, so it can be changed without res
 `--out-cmd` can point to any executable. After processing a clip, the daemon invokes it as:
 
 ```text
-<output-command> <kind> <transcript-path>
+TALK2TEXT_OUTPUT_KIND=<kind> <output-command> <transcript-path>
 ```
 
-`<kind>` is one of:
+The transcript path is the command's only argument. `TALK2TEXT_OUTPUT_KIND` is one of:
 
 | Kind | Meaning |
 | --- | --- |
@@ -224,10 +224,12 @@ Without an output command, non-empty transcripts remain in the runtime transcrip
 `--notify-cmd` also accepts any executable. The daemon invokes it asynchronously as:
 
 ```text
-<notification-command> <level> <code> <message>
+TALK2TEXT_NOTIFY_LEVEL=<level> TALK2TEXT_NOTIFY_CODE=<code> <notification-command> <message>
 ```
 
-`<level>` is `info` or `error`. Informational event codes include `record-start`, `record-stop`, `transcribe-start`, `transcribe-stop`, and `output-start`. Error codes identify the failing component, such as `audio-capture`, `whisper`, or `output-command`.
+The message is the command's only argument. `TALK2TEXT_NOTIFY_LEVEL` is `info` or `error`. `TALK2TEXT_NOTIFY_CODE` contains an informational event code such as `record-start`, `record-stop`, `transcribe-start`, `transcribe-stop`, or `output-start`, or identifies a failing component such as `audio-capture`, `whisper`, or `output-command`.
+
+These metadata variables are daemon-owned and override inherited values for each command invocation.
 
 See [`talk2text-notify-send`](docs/examples/talk2text-notify-send) for a selective `notify-send` implementation.
 

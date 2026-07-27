@@ -13,7 +13,7 @@ Some integration may need dynamic destination switching. For example, when focus
 ## Decision
 Use an external output command contract.
 
-The daemon accepts a configured output command. After clip processing completes, it writes the output text to a per-clip transcript file and invokes the command with enough arguments for the command to know both the clip classification and transcript file path.
+The daemon accepts a configured output command. After clip processing completes, it writes the output text to a per-clip transcript file and invokes the command with enough process metadata for the command to know both the clip classification and transcript file path.
 
 The configured output command is invariant from the daemon's perspective. The daemon does not choose destinations, track focus, or manage routing state.
 

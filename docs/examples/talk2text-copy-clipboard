@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
-kind="${1:-}"
-path="${2:-}"
+kind="${TALK2TEXT_OUTPUT_KIND:-}"
+path="${1:-}"
 
 notify() {
   message="$1"

@@ -2,12 +2,15 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/edmonl/talk2text/internal/daemon/session"
 	"github.com/edmonl/talk2text/internal/runtimedir"
 )
+
+const outputKindEnv = "TALK2TEXT_OUTPUT_KIND"
 
 func (d *daemon) isShortSession(s *session.Session) bool {
 	return s.Duration() <= 0 || d.cfg.MinDuration > 0 && s.Duration() < d.cfg.MinDuration
@@ -78,7 +81,8 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 			kind = "short"
 		}
 	}
-	cmd := exec.Command(outCmd, kind, path)
+	cmd := exec.Command(outCmd, path)
+	cmd.Env = append(os.Environ(), outputKindEnv+"="+kind)
 	cmd.Stderr = d.log.Writer()
 	if d.ctx.Err() != nil {
 		return

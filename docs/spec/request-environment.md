@@ -96,6 +96,13 @@ Removing the variables before applying the clip environment prevents a stale val
 
 Clip-specific output and notification commands should receive the resulting environment. Notifications and commands without a clip origin may use the daemon environment.
 
+After applying the request environment, the daemon should set command-specific metadata:
+
+1. Output commands receive `TALK2TEXT_OUTPUT_KIND`.
+2. Notification commands receive `TALK2TEXT_NOTIFY_LEVEL` and `TALK2TEXT_NOTIFY_CODE`.
+
+These variables are daemon-owned and their values take precedence over identically named variables inherited from the daemon or sent by a client. Clients do not need to be prohibited from sending the names, but users must not rely on their values being preserved for command invocation.
+
 Environment values are process data, not shell syntax. The daemon should pass them directly to the child process without shell expansion or evaluation.
 
 ## HTTP Output Target

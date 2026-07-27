@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 
-level="${1:-}"
-code="${2:-}"
-message="${3:-}"
+level="${TALK2TEXT_NOTIFY_LEVEL:-}"
+code="${TALK2TEXT_NOTIFY_CODE:-}"
+message="${1:-}"
 
 case "$level:$code" in
   info:record-start|info:transcribe-start)

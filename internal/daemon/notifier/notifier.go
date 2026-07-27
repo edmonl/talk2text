@@ -4,7 +4,13 @@ package notifier
 import (
 	"context"
 	"log"
+	"os"
 	"os/exec"
+)
+
+const (
+	notifyLevelEnv = "TALK2TEXT_NOTIFY_LEVEL"
+	notifyCodeEnv  = "TALK2TEXT_NOTIFY_CODE"
 )
 
 // Notifier emits daemon notifications.
@@ -34,7 +40,11 @@ func (n *Notifier) emit(level, code, message string) {
 		return
 	}
 	go func() {
-		cmd := exec.CommandContext(n.ctx, n.cmd, level, code, message)
+		cmd := exec.CommandContext(n.ctx, n.cmd, message)
+		cmd.Env = append(os.Environ(),
+			notifyLevelEnv+"="+level,
+			notifyCodeEnv+"="+code,
+		)
 		cmd.Stderr = n.log.Writer()
 		if err := cmd.Start(); err != nil {
 			n.log.Printf("notification command start failed: %v", err)

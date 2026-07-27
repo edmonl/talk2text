@@ -76,7 +76,7 @@ func TestDaemonClassifiesShortClipByPCMDuration(t *testing.T) {
 	}
 	logPath := filepath.Join(run, "out.log")
 	outCmd := filepath.Join(run, "out")
-	script := "#!/bin/sh\nprintf '%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$(cat \"$2\")\" >> " + shellQuote(logPath) + "\n"
+	script := "#!/bin/sh\nprintf '%s\\t%s\\t%s\\n' \"$TALK2TEXT_OUTPUT_KIND\" \"$1\" \"$(cat \"$1\")\" >> " + shellQuote(logPath) + "\n"
 	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestDaemonStartDuringStopDelayPreservesNewClip(t *testing.T) {
 	}
 	logPath := filepath.Join(run, "out.log")
 	outCmd := filepath.Join(run, "out")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$1\" > " + shellQuote(logPath) + "\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$TALK2TEXT_OUTPUT_KIND\" > " + shellQuote(logPath) + "\n"
 	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -421,6 +421,42 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 	}
 }
 
+func TestProcessTranscriptOutputCommandContract(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run, "out.log")
+	outCmd := filepath.Join(run, "out")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$#\" \"$1\" \"$TALK2TEXT_OUTPUT_KIND\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(outputKindEnv, "stale")
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{
+		RuntimeDir: run,
+		OutCmd:     outCmd,
+	}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), "", logger),
+		ctx:    context.Background(),
+	}
+
+	d.processTranscript(42, "hello world", true)
+
+	path := filepath.Join(run, "transcripts", "42")
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), "1\n"+path+"\ntext\n"; got != want {
+		t.Fatalf("output command contract = %q, want %q", got, want)
+	}
+}
+
 func TestProcessTranscriptDoesNotRemoveFileWhenOutputCommandSucceeds(t *testing.T) {
 	run := t.TempDir()
 	if err := runtimedir.PrepareDir(run, nil); err != nil {
@@ -461,7 +497,7 @@ func TestProcessTranscriptAllowsOutputCommandToRemoveFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	outCmd := filepath.Join(run, "out")
-	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nrm -f -- \"$2\"\n"), 0o700); err != nil {
+	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nrm -f -- \"$1\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer

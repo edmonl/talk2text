@@ -15,20 +15,25 @@ The daemon invokes the configured notification command path as provided for each
 The daemon starts the notification command asynchronously as:
 
 ```sh
-<notification-command> <level> <code> <message>
+TALK2TEXT_NOTIFY_LEVEL=<level> \
+TALK2TEXT_NOTIFY_CODE=<code> \
+<notification-command> <message>
 ```
 
-Arguments:
+The notification message is the command's only argument.
 
-1. `<level>` is either `info` or `error`.
-2. `<code>` is a stable event or error-source code.
-3. `<message>` is fallback display text.
+Command environment metadata:
+
+1. `TALK2TEXT_NOTIFY_LEVEL` is either `info` or `error`.
+2. `TALK2TEXT_NOTIFY_CODE` is a stable event or error-source code.
+
+These variables are daemon-owned. If the inherited daemon environment or a future request environment contains the same variables, the daemon-provided values take precedence.
 
 Notification messages should start with an uppercase letter.
 
 Clip-specific notification messages, including both informational and error notifications, should include the daemon-local clip ID.
 
-For `info` notifications, `<code>` identifies the lifecycle event. Event codes are:
+For `info` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the lifecycle event. Event codes are:
 
 1. `record-start`
 2. `record-stop`
@@ -36,7 +41,7 @@ For `info` notifications, `<code>` identifies the lifecycle event. Event codes a
 4. `transcribe-stop`
 5. `output-start`
 
-For `error` notifications, `<code>` identifies the error source, such as `config`, `runtime`, `audio-capture`, `whisper`, or `output-command`. IPC request errors are returned to the client and should not emit user notifications.
+For `error` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the error source, such as `config`, `runtime`, `audio-capture`, `whisper`, or `output-command`. IPC request errors are returned to the client and should not emit user notifications.
 
 If an error happens in a user-triggered process and may prevent the user from seeing the result, the daemon should emit an error notification.
 
@@ -51,9 +56,7 @@ Example notification command:
 
 ```sh
 #!/usr/bin/env sh
-level="$1"
-code="$2"
-message="$3"
+message="$1"
 notify-send -t 5000 'talk2text' "$message"
 ```
 

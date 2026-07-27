@@ -353,7 +353,7 @@ After transcription finishes, the daemon emits an informational `transcribe-stop
 
 The daemon hands completed transcripts to an external output command. This keeps desktop, editor, and clipboard integrations outside the Go daemon without making the daemon responsible for destination routing.
 
-The output command receives each per-clip transcript file with an output kind and performs any desktop- or editor-specific handling outside the daemon.
+The output command receives each per-clip transcript file as its only argument. The output kind is provided as command environment metadata.
 
 The daemon is configured with:
 
@@ -364,10 +364,12 @@ talk2text daemon --out-cmd /home/meng/bin/talk2text-output
 When an output command is configured, the daemon invokes:
 
 ```sh
-<output-command> <kind> <clip_transcript_file>
+TALK2TEXT_OUTPUT_KIND=<kind> <output-command> <clip_transcript_file>
 ```
 
-The output command may be any executable script or program. It can read the transcript text from the file path passed as its second argument.
+The output command may be any executable script or program. It can read the transcript text from the file path passed as its only argument.
+
+`TALK2TEXT_OUTPUT_KIND` is always set to the clip's `text`, `blank`, or `short` classification. It is daemon-owned command metadata. If the inherited daemon environment or a future request environment contains the same variable, the daemon-provided value takes precedence.
 
 The daemon emits an informational `output-start` notification for invoking the configured output command.
 
@@ -393,9 +395,8 @@ Example clipboard output command:
 
 ```sh
 #!/usr/bin/env sh
-kind="$1"
-path="$2"
-if [ "$kind" = text ]; then
+path="$1"
+if [ "$TALK2TEXT_OUTPUT_KIND" = text ]; then
     wl-copy < "$path" || exit
 fi
 rm -- "$path"
