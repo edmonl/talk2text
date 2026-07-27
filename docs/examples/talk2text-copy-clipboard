@@ -5,10 +5,12 @@ path="${1:-}"
 
 notify() {
   message="$1"
-  if ! command -v notify-send >/dev/null 2>&1; then
-    exit 1
+  if [ -z "${TALK2TEXT_NOTIFY_CMD:-}" ]; then
+    return
   fi
-  notify-send -a talk2text -u critical -t 5000 "Talk2text" "$message" >/dev/null
+  TALK2TEXT_NOTIFY_LEVEL=error \
+    TALK2TEXT_NOTIFY_CODE=output-command \
+    "$TALK2TEXT_NOTIFY_CMD" "$message"
 }
 
 copy_with() {

@@ -152,7 +152,7 @@ func httpAudioLimits(maxDuration time.Duration) (int, int64) {
 func writeHTTPJSON(w http.ResponseWriter, status int, response httpResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (d *daemon) transcribeHTTP(s *session.Session) {

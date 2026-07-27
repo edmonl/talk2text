@@ -364,12 +364,16 @@ talk2text daemon --out-cmd /home/meng/bin/talk2text-output
 When an output command is configured, the daemon invokes:
 
 ```sh
-TALK2TEXT_OUTPUT_KIND=<kind> <output-command> <clip_transcript_file>
+TALK2TEXT_OUTPUT_KIND=<kind> \
+TALK2TEXT_NOTIFY_CMD=<notification-command> \
+<output-command> <clip_transcript_file>
 ```
 
 The output command may be any executable script or program. It can read the transcript text from the file path passed as its only argument.
 
 `TALK2TEXT_OUTPUT_KIND` is always set to the clip's `text`, `blank`, or `short` classification. It is daemon-owned command metadata. If the inherited daemon environment or a future request environment contains the same variable, the daemon-provided value takes precedence.
+
+`TALK2TEXT_NOTIFY_CMD` is set to the notification command configured by `--notify-cmd`, or to an empty value when notifications are disabled. It is daemon-owned and overrides an inherited value. An output command may invoke it using the notification command contract to provide detailed errors with the same notification UX as the daemon. The value is an executable name or path, not a shell command to parse.
 
 The daemon emits an informational `output-start` notification for invoking the configured output command.
 
@@ -389,7 +393,7 @@ The output command owns transcript file cleanup:
 
 This cleanup ownership decision is documented in [ADR 0007](decisions/0007-make-output-commands-responsible-for-transcript-cleanup.md).
 
-The daemon should treat a configured but missing, non-executable, or failing output command as an output failure and emit an error notification. It may log startup or invocation errors, but it should not log output command wait or exit results.
+If a configured output command is missing, non-executable, or otherwise fails to start, the daemon should log the startup failure and emit an error notification. Once an output command starts, it owns detailed user notifications. The daemon should reap the process but should not emit another notification or log the wait or exit result when it exits unsuccessfully.
 
 Example clipboard output command:
 

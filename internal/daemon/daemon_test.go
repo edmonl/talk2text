@@ -428,15 +428,17 @@ func TestProcessTranscriptOutputCommandContract(t *testing.T) {
 	}
 	logPath := filepath.Join(run, "out.log")
 	outCmd := filepath.Join(run, "out")
-	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$#\" \"$1\" \"$TALK2TEXT_OUTPUT_KIND\" > " + shellQuote(logPath) + "\n"
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n%s\\n' \"$#\" \"$1\" \"$TALK2TEXT_OUTPUT_KIND\" \"$TALK2TEXT_NOTIFY_CMD\" > " + shellQuote(logPath) + "\n"
 	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(outputKindEnv, "stale")
+	t.Setenv(notifyCmdEnv, "stale")
 	logger := log.New(io.Discard, "", 0)
 	cfg := config.Config{
 		RuntimeDir: run,
 		OutCmd:     outCmd,
+		NotifyCmd:  "/usr/local/bin/talk2text-notify",
 	}
 	d := &daemon{
 		cfg:    &cfg,
@@ -452,8 +454,83 @@ func TestProcessTranscriptOutputCommandContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(raw), "1\n"+path+"\ntext\n"; got != want {
+	if got, want := string(raw), "1\n"+path+"\ntext\n"+cfg.NotifyCmd+"\n"; got != want {
 		t.Fatalf("output command contract = %q, want %q", got, want)
+	}
+}
+
+func TestProcessTranscriptClearsInheritedNotifyCommandWhenDisabled(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run, "out.log")
+	outCmd := filepath.Join(run, "out")
+	script := "#!/bin/sh\nprintf '%s' \"$TALK2TEXT_NOTIFY_CMD\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(notifyCmdEnv, "stale")
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{
+		RuntimeDir: run,
+		OutCmd:     outCmd,
+	}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), "", logger),
+		ctx:    context.Background(),
+	}
+
+	d.processTranscript(42, "hello world", true)
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) != 0 {
+		t.Fatalf("%s = %q, want empty", notifyCmdEnv, raw)
+	}
+}
+
+func TestProcessTranscriptLeavesStartedOutputFailureNotificationToCommand(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	outCmd := filepath.Join(run, "out")
+	if err := os.WriteFile(outCmd, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	notificationDone := filepath.Join(run, "notification-done")
+	outputErrorNotification := filepath.Join(run, "output-error-notification")
+	notifyCmd := filepath.Join(run, "notify")
+	notifyScript := "#!/bin/sh\ncase \"$TALK2TEXT_NOTIFY_CODE\" in\noutput-start)\n  sleep 0.2\n  : > " + shellQuote(notificationDone) + "\n  ;;\noutput-command)\n  : > " + shellQuote(outputErrorNotification) + "\n  ;;\nesac\n"
+	if err := os.WriteFile(notifyCmd, []byte(notifyScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{
+		RuntimeDir: run,
+		OutCmd:     outCmd,
+		NotifyCmd:  notifyCmd,
+	}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), notifyCmd, logger),
+		ctx:    context.Background(),
+	}
+
+	d.processTranscript(42, "hello world", true)
+
+	waitForCondition(t, time.Second, func() bool {
+		_, err := os.Stat(notificationDone)
+		return err == nil
+	}, "output-start notification did not finish")
+	if _, err := os.Stat(outputErrorNotification); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("daemon emitted output failure notification after command started: %v", err)
 	}
 }
 

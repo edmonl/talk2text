@@ -10,7 +10,10 @@ import (
 	"github.com/edmonl/talk2text/internal/runtimedir"
 )
 
-const outputKindEnv = "TALK2TEXT_OUTPUT_KIND"
+const (
+	outputKindEnv = "TALK2TEXT_OUTPUT_KIND"
+	notifyCmdEnv  = "TALK2TEXT_NOTIFY_CMD"
+)
 
 func (d *daemon) isShortSession(s *session.Session) bool {
 	return s.Duration() <= 0 || d.cfg.MinDuration > 0 && s.Duration() < d.cfg.MinDuration
@@ -82,7 +85,10 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 		}
 	}
 	cmd := exec.Command(outCmd, path)
-	cmd.Env = append(os.Environ(), outputKindEnv+"="+kind)
+	cmd.Env = append(os.Environ(),
+		outputKindEnv+"="+kind,
+		notifyCmdEnv+"="+d.cfg.NotifyCmd,
+	)
 	cmd.Stderr = d.log.Writer()
 	if d.ctx.Err() != nil {
 		return
@@ -93,7 +99,5 @@ func (d *daemon) processTranscript(clipID int, text string, transcribed bool) {
 		return
 	}
 	d.notify.Info("output-start", fmt.Sprintf("Processing transcript %d", clipID))
-	if err := cmd.Wait(); err != nil {
-		d.notify.Error("output-command", fmt.Sprintf("Processing transcript %d failed", clipID))
-	}
+	cmd.Wait()
 }

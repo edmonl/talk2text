@@ -202,7 +202,7 @@ The file is read again for every transcription, so it can be changed without res
 `--out-cmd` can point to any executable. After processing a clip, the daemon invokes it as:
 
 ```text
-TALK2TEXT_OUTPUT_KIND=<kind> <output-command> <transcript-path>
+TALK2TEXT_OUTPUT_KIND=<kind> TALK2TEXT_NOTIFY_CMD=<notification-command> <output-command> <transcript-path>
 ```
 
 The transcript path is the command's only argument. `TALK2TEXT_OUTPUT_KIND` is one of:
@@ -214,6 +214,8 @@ The transcript path is the command's only argument. `TALK2TEXT_OUTPUT_KIND` is o
 | `short` | The clip did not reach the minimum duration and was not sent to Whisper |
 
 The transcript path points to an owner-only file. It contains cleaned text for `text` and is empty for `blank` or `short`. Output commands may run concurrently and may complete in a different order from the clips.
+
+`TALK2TEXT_NOTIFY_CMD` contains the executable configured by `--notify-cmd`, or is empty when notifications are disabled. The daemon-provided value overrides an inherited value. Output commands can invoke it with `TALK2TEXT_NOTIFY_LEVEL`, `TALK2TEXT_NOTIFY_CODE`, and one message argument to report detailed errors through the same notification UX. The daemon reports failures to start the output command; after it starts, the output command owns detailed failure notifications.
 
 The output command is responsible for removing the transcript file after successful processing. If it delegates work to another process, it must delay removal until that process has finished reading the file. The included [`talk2text-copy-clipboard`](docs/examples/talk2text-copy-clipboard) command demonstrates this contract.
 
