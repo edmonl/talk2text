@@ -33,27 +33,30 @@ type fakeResponse struct {
 	Command string `json:"command,omitempty"`
 }
 
+type decodedResponse struct {
+	Ok    bool          `json:"ok"`
+	Error string        `json:"error,omitempty"`
+	Data  *fakeResponse `json:"data,omitempty"`
+}
+
 func newFakeHandler() *fakeHandler {
 	h := &fakeHandler{}
 	h.logger = log.New(&h.logs, "", 0)
 	return h
 }
 
-func (h *fakeHandler) Request(command string) error {
-	h.record(command)
-	switch command {
+func (h *fakeHandler) Request(request Request) (any, error) {
+	h.record(request.Command)
+	switch request.Command {
 	case "start":
-		return h.startErr
+		return nil, h.startErr
 	case "stop":
-		return h.stopErr
+		return nil, h.stopErr
+	case "status":
+		return &fakeResponse{Command: "status"}, nil
 	default:
-		return errors.New("unknown command")
+		return nil, errors.New("unknown command")
 	}
-}
-
-func (h *fakeHandler) Status() *fakeResponse {
-	h.record("status")
-	return &fakeResponse{Command: "status"}
 }
 
 func (h *fakeHandler) Logger() *log.Logger {
@@ -158,18 +161,134 @@ func TestServeClosesIncompleteRequestAfterTimeout(t *testing.T) {
 	}
 }
 
-func TestReadCommandMaxRequestBytesBoundary(t *testing.T) {
-	command, err := readCommand(strings.NewReader(strings.Repeat("x", maxRequestBytes-1) + "\n"))
+func TestReadRequestMaxBytesBoundaryUsesFirstJSONValue(t *testing.T) {
+	if _, err := readRequest(bytes.NewReader(requestWithSize(maxRequestBytes))); err != nil {
+		t.Fatal(err)
+	}
+	withTrailingValue := append(requestWithSize(maxRequestBytes), []byte(` {"command":"status"}`)...)
+	request, err := readRequest(bytes.NewReader(withTrailingValue))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command != strings.Repeat("x", maxRequestBytes-1) {
-		t.Fatalf("command = %q, want exact boundary command", command)
+	if request.Command != "stop" {
+		t.Fatalf("command = %q, want first JSON command stop", request.Command)
+	}
+	if _, err := readRequest(bytes.NewReader(requestWithSize(maxRequestBytes + 1))); err == nil || !strings.Contains(err.Error(), "invalid or too large JSON request") {
+		t.Fatalf("over-limit request error = %v, want invalid or too large JSON request", err)
+	}
+}
+
+func TestDecodeRequestValidatesSchema(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "missing command", raw: `{}`, want: "request command is required"},
+		{name: "unknown field", raw: `{"command":"status","extra":true}`, want: `unknown field "extra"`},
 	}
 
-	if _, err := readCommand(strings.NewReader(strings.Repeat("x", maxRequestBytes) + "\n")); err == nil {
-		t.Fatal("over-limit command succeeded, want error")
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := readRequest(strings.NewReader(test.raw))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("readRequest error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
+}
+
+func TestHandleConnAcceptsMultilineRequestWithoutTerminatingNewline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleConn(ctx, serverConn, newFakeHandler())
+		close(done)
+	}()
+	go func() {
+		clientConn.Write([]byte("{\n  \"command\": \"status\"\n}"))
+	}()
+
+	var resp decodedResponse
+	if err := json.NewDecoder(clientConn).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Ok || resp.Data == nil || resp.Data.Command != "status" {
+		t.Fatalf("response = %#v, want successful status", resp)
+	}
+	<-done
+}
+
+func TestDecodeRequestDuplicateFieldsUseLastValue(t *testing.T) {
+	request, err := readRequest(strings.NewReader(`{"command":"start","command":"stop","env":{"DISPLAY":"one","DISPLAY":"two"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Command != "stop" || request.Env["DISPLAY"] != "two" {
+		t.Fatalf("request = %#v, want stop with DISPLAY=two", request)
+	}
+}
+
+func TestDecodeRequestEnvironmentPresence(t *testing.T) {
+	tests := []struct {
+		name        string
+		raw         string
+		environment bool
+	}{
+		{name: "missing", raw: `{"command":"stop"}`},
+		{name: "null", raw: `{"command":"stop","env":null}`},
+		{name: "empty object", raw: `{"command":"stop","env":{}}`, environment: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := readRequest(strings.NewReader(test.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := request.Env != nil; got != test.environment {
+				t.Fatalf("environment present = %t, want %t", got, test.environment)
+			}
+		})
+	}
+}
+
+func TestHandleConnReturnsProtocolError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan struct{})
+	go func() {
+		handleConn(ctx, serverConn, newFakeHandler())
+		close(done)
+	}()
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := clientConn.Write([]byte("{]\n"))
+		writeDone <- err
+	}()
+
+	var resp decodedResponse
+	if err := json.NewDecoder(clientConn).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Ok || !strings.Contains(resp.Error, "invalid or too large JSON request") {
+		t.Fatalf("response = %#v, want invalid or too large JSON request error", resp)
+	}
+	clientConn.Close()
+	<-writeDone
+	<-done
+}
+
+func requestWithSize(size int) []byte {
+	const prefix = `{"command":"stop","env":{"DISPLAY":"`
+	const suffix = `"}}`
+	return []byte(prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix)
 }
 
 func TestHandleConnReturnsWhenContextIsCanceled(t *testing.T) {
@@ -267,7 +386,11 @@ func sendCommandResult(socketPath, command string) (map[string]any, error) {
 		return nil, err
 	}
 	defer conn.Close()
-	if _, writeErr := conn.Write([]byte(command + "\n")); writeErr != nil {
+	request := Request{Command: command}
+	if command == "start" || command == "stop" {
+		request.Env = map[string]string{}
+	}
+	if writeErr := json.NewEncoder(conn).Encode(request); writeErr != nil {
 		return nil, writeErr
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')

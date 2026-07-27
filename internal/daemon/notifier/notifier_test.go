@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/edmonl/talk2text/internal/requestenv"
 )
 
 func TestNotificationCommandContract(t *testing.T) {
@@ -28,7 +30,7 @@ func TestNotificationCommandContract(t *testing.T) {
 		{
 			name: "info",
 			emit: func(n *Notifier) {
-				n.Info("record-start", "Recording clip 7")
+				n.Info("record-start", "Recording clip 7", nil)
 			},
 			level: "info",
 			code:  "record-start",
@@ -36,7 +38,7 @@ func TestNotificationCommandContract(t *testing.T) {
 		{
 			name: "error",
 			emit: func(n *Notifier) {
-				n.Error("whisper", "Transcribing clip 7 failed")
+				n.Error("whisper", "Transcribing clip 7 failed", nil)
 			},
 			level: "error",
 			code:  "whisper",
@@ -71,4 +73,36 @@ func TestNotificationCommandContract(t *testing.T) {
 			t.Fatalf("notification command contract = %q, want %q", got, want)
 		})
 	}
+}
+
+func TestNotificationCommandOverlaysClipEnvironmentBeforeMetadata(t *testing.T) {
+	run := t.TempDir()
+	command := filepath.Join(run, "notify")
+	output := filepath.Join(run, "output")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$DISPLAY\" \"$TALK2TEXT_OUTPUT_TARGET\" \"$TALK2TEXT_NOTIFY_LEVEL\" > \"$NOTIFY_TEST_OUTPUT\"\n"
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NOTIFY_TEST_OUTPUT", output)
+	t.Setenv("DISPLAY", ":daemon")
+	t.Setenv(notifyLevelEnv, "stale")
+	n := New(context.Background(), command, log.New(io.Discard, "", 0))
+
+	n.Info("record-start", "Recording clip 7", []string{
+		"DISPLAY=:request",
+		requestenv.OutputTargetName + "=mobile",
+		notifyLevelEnv + "=request",
+	})
+
+	want := ":request\nmobile\ninfo\n"
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(output)
+		if err == nil && string(raw) == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	raw, _ := os.ReadFile(output)
+	t.Fatalf("notification environment = %q, want %q", raw, want)
 }

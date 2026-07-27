@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/edmonl/talk2text/internal/requestenv"
 )
 
 const (
@@ -26,6 +28,8 @@ type Config struct {
 	NotifyCmd string `json:"notify_cmd,omitempty"`
 	// HTTPListen is an optional address for accepting AMR-WB transcription requests.
 	HTTPListen string `json:"http_listen,omitempty"`
+	// AllowClientEnv contains additional environment variables accepted from local and HTTP requests.
+	AllowClientEnv []string `json:"allow_client_env,omitempty"`
 	// MinDuration is the shortest recording duration accepted for transcription; zero accepts every clip.
 	MinDuration time.Duration `json:"min_duration"`
 	// MaxDuration is the longest active recording duration before automatic stop; zero disables auto-stop.
@@ -119,6 +123,11 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.HTTPListen != "" && cfg.MaxDuration == 0 {
 		return errors.New("maximum duration must be nonzero when HTTP input is enabled")
+	}
+	for _, name := range cfg.AllowClientEnv {
+		if err := requestenv.ValidateName(name); err != nil {
+			return fmt.Errorf("invalid allowed client environment variable %s: %w", name, err)
+		}
 	}
 	if err := validateConfigDuration("minimum duration", cfg.MinDuration); err != nil {
 		return err

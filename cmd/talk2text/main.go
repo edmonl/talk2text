@@ -87,18 +87,18 @@ func run(args []string, stdout, stderr io.Writer, exitCode *int) error {
 		defer stop()
 		return daemon.Run(ctx, cfg, stderr)
 	case "start", "stop", "status":
-		var runtimeDir string
-		err := parseArgs(args[1:], flags.NewClientFlags(command, &runtimeDir, stdout), exitCode)
+		var cfg client.Config
+		err := parseArgs(args[1:], flags.NewClientFlags(command, &cfg, stdout), exitCode)
 		if err != nil {
 			return err
 		}
 
-		runtimeDir, err = resolveRuntimeDir(runtimeDir)
+		cfg.RuntimeDir, err = resolveRuntimeDir(cfg.RuntimeDir)
 		if err != nil {
 			return err
 		}
 
-		err = client.Run(command, runtimeDir, stdout)
+		err = client.Run(command, cfg, stdout)
 		if errors.Is(err, client.ErrDaemonUnavailable) {
 			*exitCode = exitUnavailable
 		}

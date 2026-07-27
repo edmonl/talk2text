@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/edmonl/talk2text/cmd/talk2text/flags"
+	"github.com/edmonl/talk2text/internal/client"
 	"github.com/edmonl/talk2text/internal/daemon/config"
 )
 
@@ -81,6 +82,7 @@ func TestParseDaemonFlags(t *testing.T) {
 		"--out-cmd", "/tmp/out",
 		"--notify-cmd", "/tmp/notify",
 		"--http-listen", "127.0.0.1:8081",
+		"--allow-client-env", "SWAYSOCK",
 	}, flags.NewDaemonFlags(&cfg, io.Discard), &exitCode)
 	if err != nil {
 		t.Fatal(err)
@@ -100,12 +102,15 @@ func TestParseDaemonFlags(t *testing.T) {
 	if cfg.HTTPListen != "127.0.0.1:8081" {
 		t.Fatalf("HTTPListen = %q", cfg.HTTPListen)
 	}
+	if len(cfg.AllowClientEnv) != 1 || cfg.AllowClientEnv[0] != "SWAYSOCK" {
+		t.Fatalf("AllowClientEnv = %v, want [SWAYSOCK]", cfg.AllowClientEnv)
+	}
 }
 
 func TestParseClientFlagsRejectsExtraArgument(t *testing.T) {
-	var runtimeDir string
+	var cfg client.Config
 	exitCode := exitFailure
-	err := parseArgs([]string{"--runtime-dir", "/tmp/talk2text-test", "extra"}, flags.NewClientFlags("start", &runtimeDir, io.Discard), &exitCode)
+	err := parseArgs([]string{"--runtime-dir", "/tmp/talk2text-test", "extra"}, flags.NewClientFlags("start", &cfg, io.Discard), &exitCode)
 	if err == nil {
 		t.Fatal("parseArgs succeeded with extra argument")
 	}

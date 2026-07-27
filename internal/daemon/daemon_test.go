@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -21,10 +22,14 @@ import (
 	"github.com/edmonl/talk2text/internal/daemon/config"
 	"github.com/edmonl/talk2text/internal/daemon/notifier"
 	"github.com/edmonl/talk2text/internal/daemon/session"
+	"github.com/edmonl/talk2text/internal/requestenv"
 	"github.com/edmonl/talk2text/internal/runtimedir"
+	"github.com/edmonl/talk2text/internal/server"
 	"github.com/edmonl/talk2text/internal/util/timer"
 	"github.com/edmonl/talk2text/internal/whisper"
 )
+
+const testOriginID = "test-session"
 
 type fakeAudioStream struct {
 	onPCM     func([]byte)
@@ -174,14 +179,14 @@ func TestDaemonZeroWarmRetentionStopsWithoutDeadlock(t *testing.T) {
 	cfg := config.Config{WarmRetention: 0}
 	d := &daemon{
 		cfg:    &cfg,
-		active: session.NewSession(1),
+		active: session.NewSession(1, testOriginID, map[string]string{requestenv.SessionIDName: testOriginID}),
 	}
 	d.warmTimer = newTestWarmTimer(d)
 
 	done := make(chan struct{})
 	go func() {
 		errChan := make(chan error, 1)
-		d.stop(errChan)
+		d.stop(testOriginID, errChan)
 		close(done)
 	}()
 
@@ -284,6 +289,102 @@ func TestDaemonRepeatedStopDoesNotExtendDelay(t *testing.T) {
 	}
 }
 
+func TestDaemonEnforcesRecordingOwnership(t *testing.T) {
+	d := newStopDelayTestDaemon(t, 0)
+	d.cfg.AllowClientEnv = []string{"SWAYSOCK"}
+
+	ownerEnvironment := map[string]string{
+		requestenv.SessionIDName: "owner",
+		"DISPLAY":                ":1",
+		"SWAYSOCK":               "socket",
+	}
+	if err := requestDaemon(d, testServerRequest("start", ownerEnvironment)); err != nil {
+		t.Fatal(err)
+	}
+	waitForActiveClip(t, d, 1)
+	active := activeSession(d)
+	if active.OriginID() != "owner" {
+		t.Fatalf("active session owner = %q, want owner", active.OriginID())
+	}
+
+	otherEnvironment := map[string]string{
+		requestenv.SessionIDName:    "other",
+		requestenv.OutputTargetName: "mobile",
+	}
+	if err := requestDaemon(d, testServerRequest("start", otherEnvironment)); err == nil || err.Error() != "recording busy" {
+		t.Fatalf("other-session start error = %v, want recording busy", err)
+	}
+	d.muCapture.Lock()
+	activeClip := d.active.ID()
+	nextClip := d.nextClip
+	d.muCapture.Unlock()
+	if activeClip != 1 || nextClip != 2 {
+		t.Fatalf("busy start changed recording: active=%d next=%d", activeClip, nextClip)
+	}
+
+	if err := requestDaemon(d, testServerRequest("stop", otherEnvironment)); err != nil {
+		t.Fatal(err)
+	}
+	if activeSession(d) == nil {
+		t.Fatal("other-session stop stopped the active recording")
+	}
+
+	if err := requestDaemon(d, testServerRequest("stop", map[string]string{})); err != nil {
+		t.Fatal(err)
+	}
+	if activeSession(d) == nil {
+		t.Fatal("unidentified stop stopped the active recording")
+	}
+
+	if err := requestDaemon(d, testServerRequest("stop", ownerEnvironment)); err != nil {
+		t.Fatal(err)
+	}
+	waitForNoActiveSession(t, d, "owner stop did not stop the active recording")
+}
+
+func TestDaemonRequestValidationDoesNotConsumeClipID(t *testing.T) {
+	d := newStopDelayTestDaemon(t, 0)
+
+	if err := requestDaemon(d, testServerRequest("start", map[string]string{})); err == nil || !strings.Contains(err.Error(), "requires a session identifier") {
+		t.Fatalf("missing-session start error = %v", err)
+	}
+	if err := requestDaemon(d, testServerRequest("start", map[string]string{
+		requestenv.SessionIDName: "owner",
+		"UNALLOWED":              "value",
+	})); err == nil || !strings.Contains(err.Error(), "is not allowed") {
+		t.Fatalf("unallowed environment error = %v", err)
+	}
+	if err := requestDaemon(d, testServerRequest("status", map[string]string{})); err == nil || !strings.Contains(err.Error(), "must not contain an environment") {
+		t.Fatalf("status environment error = %v", err)
+	}
+	if d.nextClip != 1 || d.active != nil {
+		t.Fatalf("rejected requests changed recording: next=%d active=%v", d.nextClip, d.active)
+	}
+}
+
+func TestDaemonRepeatedOwnerStartKeepsCapturedEnvironmentsSeparate(t *testing.T) {
+	d := newStopDelayTestDaemon(t, 0)
+	first := map[string]string{requestenv.SessionIDName: "owner", "DISPLAY": ":1"}
+	second := map[string]string{requestenv.SessionIDName: "owner", "DISPLAY": ":2"}
+
+	if err := requestDaemon(d, testServerRequest("start", first)); err != nil {
+		t.Fatal(err)
+	}
+	waitForActiveClip(t, d, 1)
+	old := activeSession(d)
+	if err := requestDaemon(d, testServerRequest("start", second)); err != nil {
+		t.Fatal(err)
+	}
+	waitForActiveClip(t, d, 2)
+	active := activeSession(d)
+	if !slices.Contains(active.Environment(), "DISPLAY=:2") {
+		t.Fatalf("replacement session = %#v environment=%v", active, active.Environment())
+	}
+	if !slices.Contains(old.Environment(), "DISPLAY=:1") {
+		t.Fatalf("old session environment changed to %v", old.Environment())
+	}
+}
+
 func TestDaemonMaxDurationCancelsDelayedStop(t *testing.T) {
 	d := newStopDelayTestDaemon(t, time.Hour)
 	d.cfg.MaxDuration = 50 * time.Microsecond
@@ -321,7 +422,7 @@ func TestDaemonStartOpenStreamErrorDoesNotLeaveMutexLocked(t *testing.T) {
 	d.warmTimer = timer.NewCallbackTimer(time.Hour, func() {})
 
 	errChan := make(chan error, 1)
-	d.start(errChan)
+	d.start(map[string]string{requestenv.SessionIDName: testOriginID}, errChan)
 	if _, ok := <-errChan; ok {
 		t.Fatal("start error channel was not closed")
 	}
@@ -359,7 +460,7 @@ func TestDaemonStartStreamStartErrorDoesNotLeaveMutexLocked(t *testing.T) {
 		startErr:  errors.New("start failed"),
 	}
 	errChan := make(chan error, 1)
-	d.start(errChan)
+	d.start(map[string]string{requestenv.SessionIDName: testOriginID}, errChan)
 	if _, ok := <-errChan; ok {
 		t.Fatal("start error channel was not closed")
 	}
@@ -406,7 +507,7 @@ func TestProcessTranscriptKeepsFileWhenOutputCommandFails(t *testing.T) {
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	path := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(path)
@@ -447,7 +548,7 @@ func TestProcessTranscriptOutputCommandContract(t *testing.T) {
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	path := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(logPath)
@@ -456,6 +557,44 @@ func TestProcessTranscriptOutputCommandContract(t *testing.T) {
 	}
 	if got, want := string(raw), "1\n"+path+"\ntext\n"+cfg.NotifyCmd+"\n"; got != want {
 		t.Fatalf("output command contract = %q, want %q", got, want)
+	}
+}
+
+func TestProcessTranscriptOverlaysSessionEnvironment(t *testing.T) {
+	run := t.TempDir()
+	if err := runtimedir.PrepareDir(run, nil); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(run, "out.log")
+	outCmd := filepath.Join(run, "out")
+	script := "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n' \"$DISPLAY\" \"$TALK2TEXT_OUTPUT_TARGET\" \"$TALK2TEXT_OUTPUT_KIND\" > " + shellQuote(logPath) + "\n"
+	if err := os.WriteFile(outCmd, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DISPLAY", ":daemon")
+	t.Setenv(requestenv.OutputTargetName, "default")
+	logger := log.New(io.Discard, "", 0)
+	cfg := config.Config{RuntimeDir: run, OutCmd: outCmd}
+	d := &daemon{
+		cfg:    &cfg,
+		log:    logger,
+		notify: notifier.New(context.Background(), "", logger),
+		ctx:    context.Background(),
+	}
+	s := session.NewSession(42, "", map[string]string{
+		"DISPLAY":                   ":request",
+		requestenv.OutputTargetName: "mobile",
+		outputKindEnv:               "request",
+	})
+
+	d.processTranscript(s, "hello world", true)
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw), ":request\nmobile\ntext\n"; got != want {
+		t.Fatalf("output environment = %q, want %q", got, want)
 	}
 }
 
@@ -483,7 +622,7 @@ func TestProcessTranscriptClearsInheritedNotifyCommandWhenDisabled(t *testing.T)
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	raw, err := os.ReadFile(logPath)
 	if err != nil {
@@ -523,7 +662,7 @@ func TestProcessTranscriptLeavesStartedOutputFailureNotificationToCommand(t *tes
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	waitForCondition(t, time.Second, func() bool {
 		_, err := os.Stat(notificationDone)
@@ -556,7 +695,7 @@ func TestProcessTranscriptDoesNotRemoveFileWhenOutputCommandSucceeds(t *testing.
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	path := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(path)
@@ -590,7 +729,7 @@ func TestProcessTranscriptAllowsOutputCommandToRemoveFile(t *testing.T) {
 		ctx:    context.Background(),
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	path := filepath.Join(run, "transcripts", "42")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -621,7 +760,7 @@ func TestProcessTranscriptPrunesOutsideWindowWithoutOutputCommand(t *testing.T) 
 	}
 
 	for clipID := 1; clipID <= 3; clipID++ {
-		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
+		d.processTranscript(session.NewSession(clipID, "", nil), fmt.Sprintf("transcript %d", clipID), true)
 	}
 
 	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
@@ -650,7 +789,7 @@ func TestProcessTranscriptDoesNotPruneWhenRetentionDisabled(t *testing.T) {
 	}
 
 	for clipID := 1; clipID <= 2; clipID++ {
-		d.processTranscript(clipID, fmt.Sprintf("transcript %d", clipID), true)
+		d.processTranscript(session.NewSession(clipID, "", nil), fmt.Sprintf("transcript %d", clipID), true)
 	}
 	for clipID := 1; clipID <= 2; clipID++ {
 		if _, err := os.Stat(filepath.Join(run, "transcripts", strconv.Itoa(clipID))); err != nil {
@@ -687,7 +826,7 @@ func TestProcessTranscriptPrunesWhenOutputCommandExits(t *testing.T) {
 		protectedTranscripts:             make(map[int]struct{}),
 	}
 
-	d.processTranscript(2, "new", true)
+	d.processTranscript(session.NewSession(2, "", nil), "new", true)
 
 	if _, err := os.Stat(filepath.Join(run, "transcripts", "1")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("transcript below retention window still exists or stat failed differently: %v", err)
@@ -800,7 +939,7 @@ func TestProcessTranscriptRemovesProtectionAfterWriteFailure(t *testing.T) {
 		protectedTranscripts: make(map[int]struct{}),
 	}
 
-	d.processTranscript(7, "text", true)
+	d.processTranscript(session.NewSession(7, "", nil), "text", true)
 	if _, ok := d.protectedTranscripts[7]; ok {
 		t.Fatal("failed transcript write remained protected")
 	}
@@ -837,7 +976,7 @@ func TestTranscribeDoesNotReportWhisperErrorWhenContextCanceled(t *testing.T) {
 		notify: notifier.New(ctx, "", logger),
 		ctx:    ctx,
 	}
-	s := session.NewSession(7)
+	s := session.NewSession(7, "", nil)
 	if err := s.OnPCM(bytes.Repeat([]byte{0, 0}, 320)); err != nil {
 		t.Fatal(err)
 	}
@@ -893,7 +1032,7 @@ func TestProcessTranscriptDoesNotStartOutputCommandAfterContextCanceled(t *testi
 		ctx:    ctx,
 	}
 
-	d.processTranscript(42, "hello world", true)
+	d.processTranscript(session.NewSession(42, "", nil), "hello world", true)
 
 	transcriptPath := filepath.Join(run, "transcripts", "42")
 	raw, err := os.ReadFile(transcriptPath)
@@ -910,6 +1049,15 @@ func TestProcessTranscriptDoesNotStartOutputCommandAfterContextCanceled(t *testi
 
 func shellQuote(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+}
+
+func testServerRequest(command string, environment map[string]string) server.Request {
+	return server.Request{Command: command, Env: environment}
+}
+
+func requestDaemon(d *daemon, request server.Request) error {
+	_, err := d.Request(request)
+	return err
 }
 
 func newStopDelayTestDaemon(t *testing.T, stopDelay time.Duration) *daemon {
@@ -938,14 +1086,14 @@ func newStopDelayTestDaemon(t *testing.T, stopDelay time.Duration) *daemon {
 func newTestWarmTimer(d *daemon) timer.Timer {
 	if d.cfg.WarmRetention <= 0 {
 		return timer.NewImmediateTimer(func() {
-			d.desireStream(streamOff)
+			d.desireStreamOff()
 		})
 	}
 	return timer.NewCallbackTimer(d.cfg.WarmRetention, func() {
 		d.muCapture.Lock()
 		defer d.muCapture.Unlock()
 		if d.active == nil {
-			d.desireStream(streamOff)
+			d.desireStreamOff()
 		}
 	})
 }
@@ -995,6 +1143,21 @@ func waitForNoActiveSession(t *testing.T, d *daemon, message string) {
 	}, message)
 }
 
+func waitForActiveClip(t *testing.T, d *daemon, clipID int) {
+	t.Helper()
+	waitForCondition(t, time.Second, func() bool {
+		d.muCapture.Lock()
+		defer d.muCapture.Unlock()
+		return d.active != nil && d.active.ID() == clipID
+	}, fmt.Sprintf("recording did not activate clip %d", clipID))
+}
+
+func activeSession(d *daemon) *session.Session {
+	d.muCapture.Lock()
+	defer d.muCapture.Unlock()
+	return d.active
+}
+
 func waitForCondition(t *testing.T, timeout time.Duration, ok func() bool, message string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -1010,7 +1173,7 @@ func waitForCondition(t *testing.T, timeout time.Duration, ok func() bool, messa
 func startDaemon(t *testing.T, d *daemon) {
 	t.Helper()
 	errChan := make(chan error, 1)
-	d.start(errChan)
+	d.start(map[string]string{requestenv.SessionIDName: testOriginID}, errChan)
 	if err := <-errChan; err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
@@ -1019,7 +1182,7 @@ func startDaemon(t *testing.T, d *daemon) {
 func stopDaemon(t *testing.T, d *daemon) {
 	t.Helper()
 	errChan := make(chan error, 1)
-	d.stop(errChan)
+	d.stop(testOriginID, errChan)
 	if err := <-errChan; err != nil {
 		t.Fatalf("stop failed: %v", err)
 	}

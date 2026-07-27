@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +21,7 @@ import (
 	"github.com/edmonl/talk2text/internal/daemon/config"
 	"github.com/edmonl/talk2text/internal/daemon/notifier"
 	"github.com/edmonl/talk2text/internal/daemon/session"
+	"github.com/edmonl/talk2text/internal/requestenv"
 	"github.com/edmonl/talk2text/internal/runtimedir"
 	"github.com/edmonl/talk2text/internal/whisper"
 )
@@ -138,6 +141,73 @@ func TestHTTPRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestHTTPRequestEnvironmentValidation(t *testing.T) {
+	d, _ := newHTTPTestDaemon(t, nil)
+	d.cfg.AllowClientEnv = []string{"SWAYSOCK"}
+
+	header := http.Header{}
+	header.Set("Talk2Text-Env", `{"TALK2TEXT_OUTPUT_TARGET":"mobile","SWAYSOCK":"socket","XDG_SESSION_ID":"ignored"}`)
+	environment, err := d.httpRequestEnvironment(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environment[requestenv.OutputTargetName] != "mobile" || environment["SWAYSOCK"] != "socket" {
+		t.Fatalf("HTTP environment = %v", environment)
+	}
+
+	header = http.Header{"Talk2text-Env": []string{`{}`, `{}`}}
+	if _, err := d.httpRequestEnvironment(header); err == nil || !strings.Contains(err.Error(), "duplicate Talk2Text-Env header") {
+		t.Fatalf("duplicate header error = %v", err)
+	}
+}
+
+func TestHTTPRejectsInvalidEnvironmentBeforeAllocatingClip(t *testing.T) {
+	d, _ := newHTTPTestDaemon(t, nil)
+	d.nextClip = 42
+
+	req := httptest.NewRequest(http.MethodPost, "/transcribe", bytes.NewReader(amrwbBody(1)))
+	req.Header.Set("Content-Type", "audio/amr-wb")
+	req.Header.Set("Talk2Text-Env", `{"UNALLOWED":"value"}`)
+	rec := httptest.NewRecorder()
+	d.handleHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if d.nextClip != 42 {
+		t.Fatalf("next clip = %d, want 42", d.nextClip)
+	}
+	if d.httpAdmitted.Load() != 0 {
+		t.Fatalf("admitted requests = %d, want 0", d.httpAdmitted.Load())
+	}
+}
+
+func TestHTTPEnvironmentReachesOutputCommand(t *testing.T) {
+	d, _ := newHTTPTestDaemon(t, nil)
+	d.cfg.MinDuration = time.Hour
+	output := filepath.Join(d.cfg.RuntimeDir, "output-environment")
+	command := filepath.Join(d.cfg.RuntimeDir, "out")
+	script := "#!/bin/sh\nprintf '%s' \"$TALK2TEXT_OUTPUT_TARGET\" > " + shellQuote(output) + "\n"
+	if err := os.WriteFile(command, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d.cfg.OutCmd = command
+
+	req := httptest.NewRequest(http.MethodPost, "/transcribe", bytes.NewReader(amrwbBody(1)))
+	req.Header.Set("Content-Type", "audio/amr-wb")
+	req.Header.Set("Talk2Text-Env", `{"TALK2TEXT_OUTPUT_TARGET":"mobile"}`)
+	rec := httptest.NewRecorder()
+	d.handleHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	waitForCondition(t, time.Second, func() bool {
+		raw, err := os.ReadFile(output)
+		return err == nil && string(raw) == "mobile"
+	}, "HTTP request environment did not reach output command")
+}
+
 func TestHTTPAcceptedResponseUsesSharedClipSequence(t *testing.T) {
 	transcribed := make(chan struct{})
 	d, _ := newHTTPTestDaemon(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +216,7 @@ func TestHTTPAcceptedResponseUsesSharedClipSequence(t *testing.T) {
 		close(transcribed)
 	}))
 	d.nextClip = 42
-	d.active = session.NewSession(7)
+	d.active = session.NewSession(7, "", nil)
 
 	rec := submitHTTPAudio(d, amrwbBody(1))
 	if rec.Code != http.StatusAccepted {
@@ -258,7 +328,7 @@ func TestHTTPWaitsForExistingLocalTranscription(t *testing.T) {
 		io.WriteString(w, `{"text":""}`)
 	}))
 
-	local := session.NewSession(99)
+	local := session.NewSession(99, "", nil)
 	if err := local.OnPCM(bytes.Repeat([]byte{0}, 640)); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +381,7 @@ func TestLocalTranscriptionCanStartDuringHTTPTranscription(t *testing.T) {
 	}
 	waitForCall(t, called, 1)
 
-	local := session.NewSession(99)
+	local := session.NewSession(99, "", nil)
 	if err := local.OnPCM(bytes.Repeat([]byte{0}, 640)); err != nil {
 		t.Fatal(err)
 	}

@@ -37,8 +37,25 @@ const (
 	streamRecording
 )
 
-func (d *daemon) desireStream(state streamState) {
-	d.desiredStreamState = state
+func (d *daemon) desireStreamOff() {
+	d.desiredStreamState = streamOff
+	d.desiredStreamEnvironment = nil
+	d.signalStreamManager()
+}
+
+func (d *daemon) desireStreamWarm(environment []string) {
+	d.desiredStreamState = streamWarm
+	d.desiredStreamEnvironment = environment
+	d.signalStreamManager()
+}
+
+func (d *daemon) desireStreamRecording() {
+	d.desiredStreamState = streamRecording
+	d.desiredStreamEnvironment = nil
+	d.signalStreamManager()
+}
+
+func (d *daemon) signalStreamManager() {
 	select {
 	case d.desiredStreamStateSignal <- struct{}{}:
 	default:
@@ -76,10 +93,12 @@ func (d *daemon) streamManager() {
 					d.muCapture.Unlock()
 					continue
 				}
+				environment := d.desiredStreamEnvironment
 				d.desiredStreamState = streamOff
+				d.desiredStreamEnvironment = nil
 				d.muCapture.Unlock()
 
-				d.notifyErr(err, "audio-capture", "failed to open audio capture to stay warm")
+				d.logNotifyError(err, environment, "audio-capture", "failed to open audio capture to stay warm")
 				continue
 			}
 
@@ -89,11 +108,13 @@ func (d *daemon) streamManager() {
 					d.muCapture.Unlock()
 					continue
 				}
+				environment := d.desiredStreamEnvironment
 				d.desiredStreamState = streamOff
+				d.desiredStreamEnvironment = nil
 				d.muCapture.Unlock()
 
 				d.closeStream()
-				d.notifyErr(err, "audio-capture", "failed to stop audio capture and stay warm")
+				d.logNotifyError(err, environment, "audio-capture", "failed to stop audio capture and stay warm")
 			}
 		case streamRecording:
 			if err := d.openStream(); err != nil {
@@ -102,13 +123,14 @@ func (d *daemon) streamManager() {
 					d.muCapture.Unlock()
 					continue
 				}
-				clipID := d.active.ID()
+				s := d.active
 				d.cancelPendingStop()
 				d.active = nil
 				d.desiredStreamState = streamOff
+				d.desiredStreamEnvironment = nil
 				d.muCapture.Unlock()
 
-				d.notifyErr(err, "audio-capture", "failed to open audio capture for clip %d", clipID)
+				d.logNotifyError(err, s.Environment(), "audio-capture", "failed to open audio capture for clip %d", s.ID())
 				continue
 			}
 
@@ -122,14 +144,15 @@ func (d *daemon) streamManager() {
 				d.muCapture.Unlock()
 				continue
 			}
-			clipID := d.active.ID()
+			s := d.active
 			d.cancelPendingStop()
 			d.active = nil
 			d.desiredStreamState = streamOff
+			d.desiredStreamEnvironment = nil
 			d.muCapture.Unlock()
 
 			d.closeStream()
-			d.notifyErr(err, "audio-capture", "failed to start audio capture for clip %d", clipID)
+			d.logNotifyError(err, s.Environment(), "audio-capture", "failed to start audio capture for clip %d", s.ID())
 		}
 	}
 }

@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"github.com/edmonl/talk2text/internal/daemon/config"
 	"github.com/edmonl/talk2text/internal/daemon/notifier"
 	"github.com/edmonl/talk2text/internal/daemon/session"
+	"github.com/edmonl/talk2text/internal/requestenv"
 	"github.com/edmonl/talk2text/internal/runtimedir"
 	"github.com/edmonl/talk2text/internal/util"
 	"github.com/edmonl/talk2text/internal/util/timer"
@@ -35,6 +37,7 @@ type daemon struct {
 	stream                   audiocapture.Stream
 	warmTimer                timer.Timer
 	desiredStreamState       streamState
+	desiredStreamEnvironment []string
 	desiredStreamStateSignal chan struct{}
 	streamManagerDone        chan struct{}
 
@@ -95,12 +98,12 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 			d.muCapture.Lock()
 			defer d.muCapture.Unlock()
 			if d.active == nil {
-				d.desireStream(streamOff)
+				d.desireStreamOff()
 			}
 		})
 	} else {
 		d.warmTimer = timer.NewImmediateTimer(func() {
-			d.desireStream(streamOff)
+			d.desireStreamOff()
 		})
 	}
 	go d.streamManager()
@@ -111,8 +114,21 @@ func Run(ctx context.Context, cfg config.Config, stderr io.Writer) error {
 	return err
 }
 
-func (d *daemon) start(errChan chan error) {
+func (d *daemon) start(environment map[string]string, errChan chan error) {
+	originID := requestenv.OriginID(environment)
+	if originID == "" {
+		errChan <- errors.New("start request requires a session identifier")
+		close(errChan)
+		return
+	}
+
 	d.muCapture.Lock()
+	if d.active != nil && d.active.OriginID() != originID {
+		d.muCapture.Unlock()
+		errChan <- errors.New("recording busy")
+		close(errChan)
+		return
+	}
 	close(errChan)
 
 	d.warmTimer.Stop()
@@ -123,8 +139,8 @@ func (d *daemon) start(errChan chan error) {
 	d.cancelPendingStop()
 	clipID := d.nextClip
 	d.nextClip++
-	d.active = session.NewSession(clipID)
-	d.desireStream(streamRecording)
+	d.active = session.NewSession(clipID, originID, environment)
+	d.desireStreamRecording()
 	d.muCapture.Unlock()
 
 	if stopped != nil {
@@ -132,11 +148,15 @@ func (d *daemon) start(errChan chan error) {
 	}
 }
 
-func (d *daemon) stop(errChan chan error) {
+func (d *daemon) stop(originID string, errChan chan error) {
 	d.muCapture.Lock()
 	close(errChan)
 
 	if d.active == nil {
+		d.muCapture.Unlock()
+		return
+	}
+	if originID == "" || d.active.OriginID() != originID {
 		d.muCapture.Unlock()
 		return
 	}
@@ -177,7 +197,7 @@ func (d *daemon) shutdown() {
 	d.warmTimer.Stop()
 	d.cancelPendingStop()
 	d.active = nil
-	d.desireStream(streamOff)
+	d.desireStreamOff()
 	d.muCapture.Unlock()
 
 	select {
@@ -205,34 +225,34 @@ func (d *daemon) onAudio(pcm []byte) {
 		// Recording may be ongoing and have the error while the stop is delayed.
 		d.cancelPendingStop()
 		d.active = nil
-		d.desireStream(streamWarm)
+		d.desireStreamWarm(s.Environment())
 		d.muCapture.Unlock()
 		d.log.Printf("failed to write PCM bytes of clip %d: %v", s.ID(), err)
-		d.notify.Error("audio-capture", fmt.Sprintf("Failed to record clip %d", s.ID()))
+		d.notify.Error("audio-capture", fmt.Sprintf("Failed to record clip %d", s.ID()), s.Environment())
 		return
 	}
 	if d.cfg.MaxDuration > 0 && s.Duration() >= d.cfg.MaxDuration {
 		// Recording may be ongoing and reach the limit while the stop is delayed.
 		d.cancelPendingStop()
 		d.active = nil
-		d.desireStream(streamWarm)
+		d.desireStreamWarm(s.Environment())
 		d.muCapture.Unlock()
 		if wasEmpty {
-			d.notify.Info("record-start", fmt.Sprintf("Recording clip %d", s.ID()))
+			d.notify.Info("record-start", fmt.Sprintf("Recording clip %d", s.ID()), s.Environment())
 		}
-		d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped with max duration", s.ID()))
+		d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped with max duration", s.ID()), s.Environment())
 		go d.transcribe(s)
 		return
 	}
 	d.muCapture.Unlock()
 	if wasEmpty {
-		d.notify.Info("record-start", fmt.Sprintf("Recording clip %d", s.ID()))
+		d.notify.Info("record-start", fmt.Sprintf("Recording clip %d", s.ID()), s.Environment())
 	}
 }
 
-func (d *daemon) notifyErr(err error, code, format string, args ...any) {
+func (d *daemon) logNotifyError(err error, environment []string, code, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	d.notify.Error(code, util.UpperFirst(msg))
+	d.notify.Error(code, util.UpperFirst(msg), environment)
 	d.log.Printf(msg+": %v", err)
 }
 
@@ -242,7 +262,7 @@ func (d *daemon) stopActiveSession() *session.Session {
 	s := d.active
 	d.active = nil
 	d.cancelPendingStop()
-	d.desireStream(streamWarm)
+	d.desireStreamWarm(s.Environment())
 	d.warmTimer.Start()
 	return s
 }
@@ -259,7 +279,7 @@ func (d *daemon) cancelPendingStop() {
 
 func (d *daemon) processStoppedSession(s *session.Session) {
 	if s.Duration() > 0 {
-		d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped", s.ID()))
+		d.notify.Info("record-stop", fmt.Sprintf("Recording clip %d stopped", s.ID()), s.Environment())
 	}
 	d.transcribe(s)
 }

@@ -33,6 +33,8 @@ Content-Type: audio/amr-wb
 
 The request body is the encoded audio itself, not multipart form data.
 
+The request may include environment values for clip-specific commands as specified in [request-environment.md](request-environment.md).
+
 The request must contain an AMR-WB storage-format stream. The daemon should decode it to signed 16-bit, one-channel, 16 kHz PCM before applying duration rules or sending the audio to Whisper.
 
 Malformed AMR-WB data and unsupported audio formats should be rejected without allocating a clip ID or invoking the output command.

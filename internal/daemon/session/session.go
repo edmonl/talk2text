@@ -6,31 +6,42 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/edmonl/talk2text/internal/requestenv"
 	"github.com/edmonl/talk2text/internal/whisper"
 )
 
 type Session struct {
-	id       int
-	buffer   *bytes.Buffer
-	duration time.Duration
+	id          int
+	buffer      *bytes.Buffer
+	duration    time.Duration
+	originID    string
+	environment []string
 }
 
-// NewSession creates an empty session.
-func NewSession(id int) *Session {
+// NewSession creates an empty session with an origin ID and captures the
+// request environment.
+func NewSession(id int, originID string, environment map[string]string) *Session {
+	encodedEnvironment := make([]string, 0, len(environment))
+	for name, value := range environment {
+		encodedEnvironment = append(encodedEnvironment, name+"="+value)
+	}
 	return &Session{
-		id:     id,
-		buffer: &bytes.Buffer{},
+		id:          id,
+		buffer:      &bytes.Buffer{},
+		originID:    originID,
+		environment: encodedEnvironment,
 	}
 }
 
-// NewSessionWithPCM creates a session backed by pcm. The caller must not
-// modify a non-nil pcm slice after passing it to NewSessionWithPCM.
-func NewSessionWithPCM(id int, pcm []byte) (*Session, error) {
+// NewRecordedSession creates a session backed by pcm with a request environment.
+// The caller must not modify a non-nil pcm slice after passing it to
+// NewRecordedSession.
+func NewRecordedSession(id int, environment map[string]string, pcm []byte) (*Session, error) {
 	duration, err := pcmDuration(pcm)
 	if err != nil {
 		return nil, err
 	}
-	s := NewSession(id)
+	s := NewSession(id, requestenv.OriginID(environment), environment)
 	if pcm != nil {
 		s.buffer = bytes.NewBuffer(pcm)
 	}
@@ -48,6 +59,17 @@ func (s *Session) PCM() []byte {
 
 func (s *Session) Duration() time.Duration {
 	return s.duration
+}
+
+// Environment returns the request environment captured for the session. The
+// caller must not modify the returned slice.
+func (s *Session) Environment() []string {
+	return s.environment
+}
+
+// OriginID returns the session identifier used for recording ownership.
+func (s *Session) OriginID() string {
+	return s.originID
 }
 
 func (s *Session) OnPCM(pcm []byte) (err error) {

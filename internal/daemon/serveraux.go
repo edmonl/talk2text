@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/edmonl/talk2text/internal/daemon/config"
+	"github.com/edmonl/talk2text/internal/requestenv"
 	"github.com/edmonl/talk2text/internal/server"
 )
 
@@ -19,8 +20,8 @@ type Status struct {
 	Config  *config.Config `json:"config,omitempty"`
 }
 
-// Status reports the daemon state.
-func (d *daemon) Status() *Status {
+// status reports the daemon state.
+func (d *daemon) status() *Status {
 	status := &Status{
 		State:   "off",
 		Pending: d.ongoingTranscriptions.Load(),
@@ -46,22 +47,32 @@ func (d *daemon) Logger() *log.Logger {
 	return d.log
 }
 
-func (d *daemon) Request(cmd string) error {
+func (d *daemon) Request(request server.Request) (any, error) {
 	if d.ctx.Err() != nil {
-		return errors.New("daemon shutting down")
+		return nil, errors.New("daemon shutting down")
+	}
+
+	environment := request.Env
+	if err := requestenv.ValidateAllowed(environment, d.cfg.AllowClientEnv); err != nil {
+		return nil, err
 	}
 
 	errChan := make(chan error, 1)
-	switch cmd {
+	switch request.Command {
 	case "start":
-		go d.start(errChan)
+		go d.start(environment, errChan)
 	case "stop":
-		go d.stop(errChan)
+		go d.stop(requestenv.OriginID(environment), errChan)
+	case "status":
+		if request.Env != nil {
+			return nil, errors.New("status request must not contain an environment")
+		}
+		return d.status(), nil
 	default:
-		return errors.New("unknown command")
+		return nil, errors.New("unknown command")
 	}
 
-	return <-errChan
+	return nil, <-errChan
 }
 
 func (d *daemon) serveSocket(socketPath string) error {

@@ -77,6 +77,11 @@ The daemon command-line options should include:
    - Disabled by default.
    - Requires a nonzero `TALK2TEXT_MAX_DURATION`.
 
+5. Additional request environment variables
+   - Repeatable environment variable allowlist.
+   - Passed as `--allow-client-env`.
+   - Applies to local and HTTP request environments.
+
 Daemon and client subcommands should both accept:
 
 1. Runtime directory
@@ -191,17 +196,31 @@ The daemon listens for connections on the Unix socket at `<runtime_dir>/daemon.s
 
 The socket path is an address for connecting to the daemon. The daemon does not read `daemon.sock` as a regular file. Instead, it accepts client connections and reads bytes from each connected stream.
 
-Because stream sockets do not preserve message boundaries, the IPC protocol uses newline-delimited UTF-8 messages. Each client connection sends one command line and receives one JSON response line.
+The IPC protocol uses JSON. The first complete JSON value on each client connection is the request and must be an object. The daemon ignores bytes after that value and sends one response object.
 
-Supported command lines:
+Supported request commands:
 
 1. `start`
 2. `stop`
 3. `status`
 
-Unknown command lines should receive an unsuccessful JSON response. Malformed requests that cannot be read as a complete command line may be logged by the daemon and closed without a JSON response. The daemon may apply a short read timeout to incomplete IPC requests so one connected client cannot block later clients.
+`start` and `stop` requests support an environment object:
 
-Raw socket responses are JSON objects. A successful `start` or `stop` response acknowledges that the daemon received and accepted the command line. It does not guarantee that the daemon has already performed work for that command before sending the response. This response-timing decision is documented in [ADR 0006](decisions/0006-use-acknowledgement-only-start-and-stop-responses.md). Successful `start` and `stop` responses may be minimal, such as:
+```json
+{"command":"start","env":{"XDG_SESSION_ID":"3","WAYLAND_DISPLAY":"wayland-1"}}
+```
+
+A `status` request contains only its command:
+
+```json
+{"command":"status"}
+```
+
+The complete request environment, validation, and recording ownership contract is specified in [spec/request-environment.md](spec/request-environment.md).
+
+Once the daemon receives the first complete JSON value, unknown commands and JSON, schema, or environment validation errors should receive an unsuccessful JSON response. The bytes through the end of that value should be bounded, and oversized requests should be rejected. Trailing bytes do not count toward the request size. Handling of incomplete first values, including timeouts and whether a response can be returned, is an implementation detail.
+
+Raw socket responses are JSON objects. A successful `start` or `stop` response acknowledges that the daemon received and accepted the request. It does not guarantee that the daemon has already performed work for that command before sending the response. This response-timing decision is documented in [ADR 0006](decisions/0006-use-acknowledgement-only-start-and-stop-responses.md). Successful `start` and `stop` responses may be minimal, such as:
 
 ```json
 {"ok":true}
@@ -224,7 +243,7 @@ When the daemon is unavailable, client subcommands should print a short error me
 
 # HTTP Audio Submission
 
-The daemon can accept AMR-WB clips through an optional `POST /transcribe` HTTP endpoint. This input is disabled by default and does not replace or control local microphone capture. Its request format, admission limits, clip lifecycle, response contract, and security constraints are specified in [spec/http-transcription.md](spec/http-transcription.md).
+The daemon can accept AMR-WB clips through an optional `POST /transcribe` HTTP endpoint. This input is disabled by default and does not replace or control local microphone capture. Its request format, admission limits, clip lifecycle, response contract, and security constraints are specified in [spec/http-transcription.md](spec/http-transcription.md). Optional HTTP request environment values are specified in [spec/request-environment.md](spec/request-environment.md).
 
 # Audio Capture
 
@@ -371,7 +390,7 @@ TALK2TEXT_NOTIFY_CMD=<notification-command> \
 
 The output command may be any executable script or program. It can read the transcript text from the file path passed as its only argument.
 
-`TALK2TEXT_OUTPUT_KIND` is always set to the clip's `text`, `blank`, or `short` classification. It is daemon-owned command metadata. If the inherited daemon environment or a future request environment contains the same variable, the daemon-provided value takes precedence.
+`TALK2TEXT_OUTPUT_KIND` is always set to the clip's `text`, `blank`, or `short` classification. It is daemon-owned command metadata. If the inherited daemon environment or a request environment contains the same variable, the daemon-provided value takes precedence.
 
 `TALK2TEXT_NOTIFY_CMD` is set to the notification command configured by `--notify-cmd`, or to an empty value when notifications are disabled. It is daemon-owned and overrides an inherited value. An output command may invoke it using the notification command contract to provide detailed errors with the same notification UX as the daemon. The value is an executable name or path, not a shell command to parse.
 
@@ -447,8 +466,3 @@ Shutdown should prioritize avoiding leaked resources over preserving unfinished 
 1. Global transcription concurrency limit
    - HTTP submissions have bounded admission and serialized Whisper requests, but local transcriptions are not globally limited and may overlap an HTTP transcription.
    - If combined local and HTTP input can overwhelm the Whisper endpoint or retain too much in-memory audio, add a configurable maximum number of in-flight transcription requests.
-
-2. Request environment and output routing
-   - Preserve the originating graphical environment for local recordings owned by one of multiple concurrent user sessions.
-   - Allow sessionless HTTP submissions to select abstract output handling without supplying graphical environment variables.
-   - The proposed behavior is specified in [spec/request-environment.md](spec/request-environment.md).

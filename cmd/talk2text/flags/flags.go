@@ -6,8 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
+	"github.com/edmonl/talk2text/internal/client"
 	"github.com/edmonl/talk2text/internal/daemon/config"
+	"github.com/edmonl/talk2text/internal/requestenv"
 )
 
 // Flags wraps a flag set with its own usage printing.
@@ -34,12 +38,15 @@ func NewGlobalFlags(stdout io.Writer) *Flags {
 	})
 }
 
-func NewClientFlags(command string, runtimeDir *string, stdout io.Writer) *Flags {
+func NewClientFlags(command string, cfg *client.Config, stdout io.Writer) *Flags {
 	fs := newFlags(stdout, func(out io.Writer) {
 		fmt.Fprintln(out, "Usage:")
 		fmt.Fprintf(out, "  talk2text %s [flags]\n", command)
 	})
-	fs.set.StringVar(runtimeDir, "runtime-dir", "", "runtime directory containing the daemon socket")
+	fs.set.StringVar(&cfg.RuntimeDir, "runtime-dir", "", "runtime directory containing the daemon socket")
+	if command == "start" {
+		fs.set.Var(environmentNamesValue{names: &cfg.SendEnv}, "send-env", "additional environment variable to send; repeatable")
+	}
 	return fs
 }
 
@@ -53,6 +60,7 @@ func NewDaemonFlags(cfg *config.Config, stdout io.Writer) *Flags {
 	fs.set.StringVar(&cfg.OutCmd, "out-cmd", "", "command run after each completed clip; receives the transcript path")
 	fs.set.StringVar(&cfg.NotifyCmd, "notify-cmd", "", "command used to emit user notifications; receives the message")
 	fs.set.StringVar(&cfg.HTTPListen, "http-listen", cfg.HTTPListen, "address for accepting AMR-WB HTTP transcription requests; disabled when empty")
+	fs.set.Var(environmentNamesValue{names: &cfg.AllowClientEnv}, "allow-client-env", "additional request environment variable to allow; repeatable")
 	return fs
 }
 
@@ -82,4 +90,22 @@ func newFlags(stdout io.Writer, usage func(out io.Writer)) *Flags {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	return &Flags{set: fs, stdout: stdout, usage: usage}
+}
+
+type environmentNamesValue struct {
+	names *[]string
+}
+
+func (v environmentNamesValue) String() string {
+	return strings.Join(*v.names, ",")
+}
+
+func (v environmentNamesValue) Set(name string) error {
+	if err := requestenv.ValidateName(name); err != nil {
+		return err
+	}
+	if !slices.Contains(*v.names, name) {
+		*v.names = append(*v.names, name)
+	}
+	return nil
 }

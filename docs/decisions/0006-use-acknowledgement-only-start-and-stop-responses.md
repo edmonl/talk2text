@@ -11,7 +11,7 @@ Starting or stopping recording can involve session state changes, audio stream o
 If the IPC response means "the daemon has completed the requested recording operation", client latency becomes coupled to the slowest part of the daemon's recording path. That makes key press and key release shortcuts more fragile, especially when an audio backend is slow.
 
 ## Decision
-Successful `start` and `stop` IPC responses acknowledge that the daemon received and accepted the command line. They do not mean the daemon has already completed the recording-state transition, audio stream operation, notification, transcription, or output work associated with the command.
+Successful `start` and `stop` IPC responses acknowledge that the daemon received and accepted the request. They do not mean the daemon has already completed the recording-state transition, audio stream operation, notification, transcription, or output work associated with the command.
 
 The daemon remains responsible for handling accepted recording commands according to the current spec. This decision only defines what the client may infer from the response. It does not require a particular internal scheduling, queuing, or serialization design.
 

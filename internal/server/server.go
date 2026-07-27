@@ -2,7 +2,6 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,31 +10,35 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"time"
 )
 
-type Response[DataType any] struct {
-	Ok    bool      `json:"ok"`
-	Error string    `json:"error,omitempty"`
-	Data  *DataType `json:"data,omitempty"`
+// Request is one IPC request.
+type Request struct {
+	Command string            `json:"command"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+type response struct {
+	Ok    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+	Data  any    `json:"data,omitempty"`
 }
 
 // Handler executes daemon commands received by the IPC server.
-type Handler[StatusType any] interface {
-	Request(cmd string) error
-	Status() *StatusType
+type Handler interface {
+	Request(request Request) (any, error)
 	// Logger must not return nil.
 	Logger() *log.Logger
 }
 
 const (
-	maxRequestBytes = 10
+	maxRequestBytes = 16 << 10
 	requestTimeout  = 250 * time.Millisecond
 )
 
 // Serve listens on socketPath and accepts IPC connections until ctx is done.
-func Serve[StatusType any](ctx context.Context, socketPath string, handler Handler[StatusType]) error {
+func Serve(ctx context.Context, socketPath string, handler Handler) error {
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
@@ -64,7 +67,7 @@ func Serve[StatusType any](ctx context.Context, socketPath string, handler Handl
 	}
 }
 
-func handleConn[StatusType any](ctx context.Context, conn net.Conn, handler Handler[StatusType]) {
+func handleConn(ctx context.Context, conn net.Conn, handler Handler) {
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -80,59 +83,50 @@ func handleConn[StatusType any](ctx context.Context, conn net.Conn, handler Hand
 		handler.Logger().Printf("failed to set request read deadline: %v", err)
 		return
 	}
-	command, err := readCommand(conn)
+	request, err := readRequest(conn)
 	if err != nil {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		handler.Logger().Printf("failed to read request: %v", err)
+		var netErr net.Error
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &netErr) && netErr.Timeout() {
+			handler.Logger().Printf("failed to read request: %v", err)
+			return
+		}
+		writeResponse(conn, handler, response{Error: err.Error()})
 		return
 	}
 
-	var resp Response[StatusType]
-	switch command {
-	case "status":
-		status := handler.Status()
-		if status == nil {
-			resp = Response[StatusType]{Error: "failed to get status"}
-		} else {
-			resp = Response[StatusType]{
-				Ok:   true,
-				Data: status,
-			}
-		}
-	default:
-		resp = getRespByError[StatusType](handler.Request(command))
+	data, err := handler.Request(request)
+	if err == nil {
+		writeResponse(conn, handler, response{Ok: true, Data: data})
+	} else {
+		writeResponse(conn, handler, response{Error: err.Error()})
 	}
+}
 
+func writeResponse(conn net.Conn, handler Handler, resp response) {
 	if err := conn.SetWriteDeadline(time.Now().Add(requestTimeout)); err != nil {
 		handler.Logger().Printf("failed to set response write deadline: %v", err)
 		return
 	}
-	err = json.NewEncoder(conn).Encode(resp)
-	if err != nil {
+	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		handler.Logger().Printf("failed to write response: %v", err)
 	}
 }
 
-func getRespByError[DataType any](err error) Response[DataType] {
-	if err == nil {
-		return Response[DataType]{Ok: true}
-	}
+func readRequest(r io.Reader) (Request, error) {
+	decoder := json.NewDecoder(io.LimitReader(r, maxRequestBytes))
+	decoder.DisallowUnknownFields()
 
-	return Response[DataType]{Error: err.Error()}
-}
-
-func readCommand(r io.Reader) (string, error) {
-	limited := &io.LimitedReader{R: r, N: maxRequestBytes}
-	line, err := bufio.NewReader(limited).ReadString('\n')
-	if err != nil {
-		if errors.Is(err, io.EOF) && limited.N == 0 {
-			return "", errors.New("request too large")
-		}
-		return "", err
+	var request Request
+	if err := decoder.Decode(&request); err != nil {
+		return Request{}, fmt.Errorf("invalid or too large JSON request: %w", err)
 	}
-	return strings.TrimSpace(line), nil
+	if request.Command == "" {
+		return Request{}, errors.New("request command is required")
+	}
+	return request, nil
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/edmonl/talk2text/internal/client"
 	"github.com/edmonl/talk2text/internal/daemon/config"
 )
 
@@ -29,13 +30,32 @@ func TestGlobalUsageIncludesSubcommands(t *testing.T) {
 }
 
 func TestClientFlagsBindRuntimeDir(t *testing.T) {
-	var runtimeDir string
-	fs := NewClientFlags("status", &runtimeDir, io.Discard)
+	var cfg client.Config
+	fs := NewClientFlags("status", &cfg, io.Discard)
 	if _, err := fs.Parse([]string{"--runtime-dir", "/tmp/talk2text-test"}); err != nil {
 		t.Fatal(err)
 	}
-	if runtimeDir != "/tmp/talk2text-test" {
-		t.Fatalf("runtimeDir = %q", runtimeDir)
+	if cfg.RuntimeDir != "/tmp/talk2text-test" {
+		t.Fatalf("RuntimeDir = %q", cfg.RuntimeDir)
+	}
+}
+
+func TestStartFlagsBindAndDeduplicateSendEnvironment(t *testing.T) {
+	var cfg client.Config
+	fs := NewClientFlags("start", &cfg, io.Discard)
+	if _, err := fs.Parse([]string{"--send-env", "SWAYSOCK", "--send-env", "SWAYSOCK"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.SendEnv) != 1 || cfg.SendEnv[0] != "SWAYSOCK" {
+		t.Fatalf("SendEnv = %v, want [SWAYSOCK]", cfg.SendEnv)
+	}
+}
+
+func TestStopFlagsDoNotAcceptSendEnvironment(t *testing.T) {
+	var cfg client.Config
+	fs := NewClientFlags("stop", &cfg, io.Discard)
+	if _, err := fs.Parse([]string{"--send-env", "SWAYSOCK"}); err == nil {
+		t.Fatal("stop accepted --send-env")
 	}
 }
 
@@ -51,6 +71,7 @@ func TestDaemonUsageIncludesFlagDescriptions(t *testing.T) {
 		"command run after each completed clip",
 		"command used to emit user notifications",
 		"address for accepting AMR-WB HTTP transcription requests",
+		"additional request environment variable to allow",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("usage missing %q:\n%s", want, output)

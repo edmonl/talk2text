@@ -27,7 +27,7 @@ Command environment metadata:
 1. `TALK2TEXT_NOTIFY_LEVEL` is either `info` or `error`.
 2. `TALK2TEXT_NOTIFY_CODE` is a stable event or error-source code.
 
-These variables are daemon-owned. If the inherited daemon environment or a future request environment contains the same variables, the daemon-provided values take precedence.
+These variables are daemon-owned. If the inherited daemon environment or a request environment contains the same variables, the daemon-provided values take precedence.
 
 Notification messages should start with an uppercase letter.
 

@@ -135,3 +135,15 @@ func TestDefaultConfigUsesDefaultTranscriptRetentionWindow(t *testing.T) {
 		t.Fatalf("TranscriptRetentionWindow = %d, want 100", cfg.TranscriptRetentionWindow)
 	}
 }
+
+func TestValidateConfigRejectsInvalidAllowedEnvironmentName(t *testing.T) {
+	cfg, err := DefaultConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AllowClientEnv = []string{"INVALID=NAME"}
+	err = ValidateConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "invalid allowed client environment variable") {
+		t.Fatalf("ValidateConfig error = %v, want invalid environment name", err)
+	}
+}

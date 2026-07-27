@@ -14,6 +14,7 @@ import (
 
 	"github.com/edmonl/talk2text/internal/amrwb"
 	"github.com/edmonl/talk2text/internal/daemon/session"
+	"github.com/edmonl/talk2text/internal/requestenv"
 )
 
 const (
@@ -74,6 +75,11 @@ func (d *daemon) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		writeHTTPJSON(w, http.StatusServiceUnavailable, httpResponse{Error: "shutting down"})
 		return
 	}
+	environment, err := d.httpRequestEnvironment(r.Header)
+	if err != nil {
+		writeHTTPJSON(w, http.StatusBadRequest, httpResponse{Error: err.Error()})
+		return
+	}
 	if d.httpAdmitted.Add(1) > maxHTTPAdmitted {
 		d.httpAdmitted.Add(-1)
 		writeHTTPJSON(w, http.StatusServiceUnavailable, httpResponse{Error: "busy"})
@@ -131,7 +137,7 @@ func (d *daemon) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	d.nextClip++
 	d.muCapture.Unlock()
 
-	s, err := session.NewSessionWithPCM(clipID, pcm)
+	s, err := session.NewRecordedSession(clipID, environment, pcm)
 	if err != nil {
 		d.log.Printf("failed to accept HTTP audio for clip %d: %v", clipID, err)
 		writeHTTPJSON(w, http.StatusInternalServerError, httpResponse{Error: "failed to accept audio"})
@@ -158,7 +164,7 @@ func writeHTTPJSON(w http.ResponseWriter, status int, response httpResponse) {
 func (d *daemon) transcribeHTTP(s *session.Session) {
 	if d.isShortSession(s) {
 		d.httpAdmitted.Add(-1)
-		d.processTranscript(s.ID(), "", false)
+		d.processTranscript(s, "", false)
 		return
 	}
 
@@ -167,6 +173,26 @@ func (d *daemon) transcribeHTTP(s *session.Session) {
 	if success {
 		d.processLongSession(s)
 	}
+}
+
+func (d *daemon) httpRequestEnvironment(header http.Header) (map[string]string, error) {
+	values := header.Values("Talk2Text-Env")
+	switch len(values) {
+	case 0:
+		return nil, nil
+	case 1:
+	default:
+		return nil, errors.New("duplicate Talk2Text-Env header")
+	}
+
+	environment, err := requestenv.Decode([]byte(values[0]))
+	if err != nil {
+		return nil, fmt.Errorf("invalid Talk2Text-Env header: %w", err)
+	}
+	if err := requestenv.ValidateAllowed(environment, d.cfg.AllowClientEnv); err != nil {
+		return nil, err
+	}
+	return environment, nil
 }
 
 func (d *daemon) waitForLocalTranscriptions() bool {
