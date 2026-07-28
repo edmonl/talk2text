@@ -87,6 +87,8 @@ func (d *daemon) processTranscript(s *session.Session, text string, transcribed 
 		}
 	}
 	cmd := exec.Command(outCmd, path)
+	// Append in precedence order: daemon environment, captured request
+	// environment, then daemon-owned metadata.
 	cmd.Env = append(append(os.Environ(), environment...),
 		outputKindEnv+"="+kind,
 		notifyCmdEnv+"="+d.cfg.NotifyCmd,
@@ -101,5 +103,7 @@ func (d *daemon) processTranscript(s *session.Session, text string, transcribed 
 		return
 	}
 	d.notify.Info("output-start", fmt.Sprintf("Processing transcript %d", clipID), environment)
+	// Wait only reaps the process; post-start failure reporting belongs to the
+	// output command.
 	cmd.Wait()
 }

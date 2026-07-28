@@ -1,28 +1,16 @@
 # Request Environment and Output Routing
 
-This document specifies how local and HTTP requests provide environment values for clip-specific output and notification commands.
+Request environments let one daemon serve multiple graphical sessions while running clip-specific output and notification commands in the environment that started each clip. The daemon treats these values as opaque routing data.
 
-## Goals
+## Local Requests
 
-The daemon may run once per user while that user has multiple concurrent graphical login sessions. A completed local recording should invoke clip-specific output and notification commands in the environment of the session that started the recording, rather than whichever environment the daemon inherited when it started.
-
-HTTP submissions have no recording ownership or login-session semantics, but they may provide allowed environment values for clip-specific commands.
-
-The daemon remains unaware of window managers, editors, clipboards, and the meaning of user-provided routing values.
-
-## Local Client Environment
-
-Local client requests use a JSON protocol. An `env` object on a `start` or `stop` request contains environment variable names and values:
+`start` and `stop` requests may contain an `env` object of environment variable names and string values:
 
 ```json
 {"command":"start","env":{"XDG_SESSION_ID":"3","WAYLAND_DISPLAY":"wayland-1"}}
 ```
 
-```json
-{"command":"stop","env":{"XDG_SESSION_ID":"3"}}
-```
-
-The predefined request environment allowlist contains:
+Predefined allowed names:
 
 1. `TALK2TEXT_SESSION_ID`
 2. `XDG_SESSION_ID`
@@ -36,98 +24,58 @@ The predefined request environment allowlist contains:
 10. `XDG_CURRENT_DESKTOP`
 11. `TALK2TEXT_OUTPUT_TARGET`
 
-The `start` client should automatically send the predefined variables other than `TALK2TEXT_OUTPUT_TARGET` when they are set. The `stop` client should automatically send only the session-identifying variables when they are set. Automatically handled variables should be omitted when unset. The `status` client should not send an environment object.
+The `start` client sends set predefined variables except `TALK2TEXT_OUTPUT_TARGET`. The `stop` client sends only the two session identifiers. Unset variables are omitted, and `status` sends no environment.
 
-The daemon should use `TALK2TEXT_SESSION_ID` as the originating-session identifier when it is present and non-empty. Otherwise, it should use `XDG_SESSION_ID`. These variables remain ordinary members of the request environment.
+`TALK2TEXT_SESSION_ID` is the preferred recording-owner identifier; a non-empty `XDG_SESSION_ID` is the fallback. A session launcher may provide a stable `TALK2TEXT_SESSION_ID` when the desktop does not provide a useful XDG session ID.
 
-`TALK2TEXT_SESSION_ID` is an optional override for environments that do not provide a suitable `XDG_SESSION_ID`. A random override must be generated once by the graphical-session launcher and inherited by every client in that session. A client must not generate a new random identifier for each invocation.
-
-The daemon should reject a start request when both session-identifying variables are absent or empty. The rejection should not consume a clip ID.
-
-An accepted `start` environment should be copied into the recording session and remain unchanged for the lifetime of the resulting clip. A later client request must not replace the stored environment of an earlier clip.
+A start without either identifier is rejected without consuming a clip ID. An accepted start environment is captured for that clip and cannot be replaced by later requests.
 
 ## Additional Variables
 
-The daemon should support a repeatable option that permits additional environment variables from local and HTTP requests:
+The daemon accepts repeatable `--allow-client-env <name>` options for additional local and HTTP variables. The `start` client reads additional variables through repeatable `--send-env <name>` options. `stop` does not accept `--send-env`.
 
-```sh
-talk2text daemon \
-  --allow-client-env SWAYSOCK \
-  --allow-client-env HYPRLAND_INSTANCE_SIGNATURE
-```
-
-The `start` client should support a repeatable option that reads and sends additional variables from its current environment:
-
-```sh
-talk2text start \
-  --send-env SWAYSOCK \
-  --send-env HYPRLAND_INSTANCE_SIGNATURE
-```
-
-`--send-env` accepts a variable name, not a `NAME=VALUE` assignment. A requested variable is omitted when it is unset.
-
-The effective request environment allowlist consists of the predefined variables and variables named by `--allow-client-env`. The daemon should apply the same allowlist to `start`, `stop`, and HTTP request environments. A request that sends any other variable should be rejected.
-
-Request validation should not reject an allowed variable merely because the receiving command does not use it. Recording ownership uses only the session-identifying variables. Other allowed variables in a `stop` request are ignored. HTTP processing does not use session-identifying variables.
-
-The bundled client should send only variables useful to its command. In particular, `stop` does not support `--send-env`.
-
-The effective additional-variable allowlist should be included in daemon status output.
+`--send-env` takes a variable name, not an assignment, and omits an unset variable. Requests containing names outside the effective allowlist are rejected. The additional allowlist appears in daemon status.
 
 ## Recording Ownership
 
-The originating-session identifier is routing and ownership metadata, not an authentication credential. Access to the owner-only Unix socket remains the local authorization boundary.
+The session identifier is routing metadata, not an authentication credential; the owner-only Unix socket is the local authorization boundary.
 
-When no recording is active, a valid `start` request establishes the originating session as the recording owner.
+When a recording is active:
 
-While a recording owned by one session is active:
+1. Another owner’s `start` is rejected as busy without changing clip state.
+2. The owner’s `stop` is accepted.
+3. Another or unidentified owner’s `stop` succeeds without effect.
+4. The owner’s repeated `start` keeps the normal replacement behavior.
 
-1. A `start` from another session should be rejected as busy without consuming a clip ID or changing the active recording.
-2. A `stop` from the owning session should be accepted.
-3. A `stop` from another or unidentified session should be a successful no-op.
-4. A repeated `start` from the owning session should retain the existing start behavior.
-
-When no recording is active, `stop` should remain a successful no-op.
-
-The `stop` client should automatically send the session-identifying variables. A `stop` request without a non-empty session identifier should be a successful no-op.
+Stopping while idle also succeeds without effect. Ownership ends when recording stops; later transcription and output do not keep the session busy.
 
 ## Command Environment
 
-Before invoking a clip-specific output or notification command, the daemon should start with its own environment and overlay the environment values supplied for the clip. Variables absent from the clip environment retain their inherited daemon values.
+Clip-specific output and notification commands start with the daemon environment overlaid by the captured request environment. Variables absent from the request retain daemon values.
 
-Clip-specific output and notification commands should receive the resulting environment. Notifications and commands without a clip origin may use the daemon environment.
+The daemon then applies command-owned metadata, which takes precedence:
 
-After applying the request environment, the daemon should set command-specific metadata:
+1. Output commands: `TALK2TEXT_OUTPUT_KIND`, `TALK2TEXT_NOTIFY_CMD`
+2. Notification commands: `TALK2TEXT_NOTIFY_LEVEL`, `TALK2TEXT_NOTIFY_CODE`
 
-1. Output commands receive `TALK2TEXT_OUTPUT_KIND` and `TALK2TEXT_NOTIFY_CMD`.
-2. Notification commands receive `TALK2TEXT_NOTIFY_LEVEL` and `TALK2TEXT_NOTIFY_CODE`.
+Values are passed directly as process environment data without shell evaluation.
 
-These variables are daemon-owned for the commands where the daemon generates them. Their generated values take precedence over identically named variables inherited from the daemon or supplied with a request. The names do not need to be prohibited from the request environment, but users must not rely on a supplied value being preserved when the daemon generates that variable.
+## HTTP Requests
 
-Environment values are process data, not shell syntax. The daemon should pass them directly to the child process without shell expansion or evaluation.
-
-## HTTP Request Environment
-
-An HTTP client may provide an environment object in a single `Talk2Text-Env` header:
+An HTTP submission may provide one JSON environment object:
 
 ```http
 Talk2Text-Env: {"TALK2TEXT_OUTPUT_TARGET":"mobile"}
 ```
 
-The header is optional. When it is absent, the request does not override the daemon environment. `TALK2TEXT_OUTPUT_TARGET` is an optional convention interpreted by the configured output command; the daemon assigns it no special meaning. For example, an output command may use the value `mobile` to handle an HTTP submission differently from a local recording.
+The same syntax and allowlist apply to local and HTTP environments. Duplicate, malformed, or disallowed headers receive `400 Bad Request` before a clip ID is allocated.
 
-The daemon should apply the same environment syntax and allowlist validation to the header object as it applies to local request environments. A duplicate or malformed `Talk2Text-Env` header should receive `400 Bad Request` before a clip ID is allocated.
+HTTP environments provide command routing only; they do not establish recording ownership. Because the endpoint has no built-in authentication or encryption, environment values are safe only under its trusted-network assumptions.
 
-The HTTP endpoint remains unauthenticated and unencrypted. Request environment values should be accepted only under the endpoint's existing trusted-network or user-managed tunnel assumptions. Users are responsible for the effects of variables they add through `--allow-client-env`.
+## Validation
 
-## Request Validation
+The first complete local JSON value is the request; later bytes are ignored. Requests require a string `command`, reject unknown top-level fields, and allow only string-valued environment objects. `status` rejects an environment object.
 
-The first complete JSON value received from a local client is the request, and any bytes after that value are ignored. The request must be an object with a required string `command`. An `env` object must contain string names and values. A `status` request must not contain an `env` object. Whether `start` and `stop` require an `env` object, and how missing, null, and empty environments are distinguished, are implementation details. Unknown top-level fields should be rejected. Handling duplicate JSON object keys and character encoding accepted by the JSON parser are also implementation details.
+Environment names must be non-empty and contain no `=`, comma, or NUL. Values must contain no NUL. Empty values are allowed but do not establish ownership.
 
-Environment names must be non-empty and must not contain `=`, comma, or NUL. Environment values must not contain NUL. No other character restrictions apply. Empty values are permitted, but an empty session identifier does not establish recording ownership.
-
-The daemon should bound the local bytes through the end of the first JSON value, the complete HTTP environment header, and each environment name and value. Requests that exceed the limits should be rejected. Trailing local bytes are ignored and do not count toward the request size. A complete invalid first local JSON value should receive an unsuccessful JSON response. Exact size limits and handling of incomplete requests are implementation details.
-
-Client environment values must not be written to normal logs or included in status output. Status may report environment variable names that are configured or active.
-
-Recording ownership ends when recording stops. Transcription and output processing do not keep the originating session busy and retain their existing concurrency behavior.
+Local requests, HTTP environment headers, names, and values are bounded. Environment values must not appear in normal logs or status output.

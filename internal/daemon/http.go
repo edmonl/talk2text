@@ -86,6 +86,8 @@ func (d *daemon) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The handler owns this admission slot until it transfers ownership to
+	// transcribeHTTP.
 	unfinished := true
 	defer func() {
 		if unfinished {
@@ -144,6 +146,7 @@ func (d *daemon) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// transcribeHTTP now owns releasing the admission slot.
 	unfinished = false
 	go d.transcribeHTTP(s)
 	writeHTTPJSON(w, http.StatusAccepted, httpResponse{Ok: true, ClipID: clipID})
@@ -196,6 +199,8 @@ func (d *daemon) httpRequestEnvironment(header http.Header) (map[string]string, 
 }
 
 func (d *daemon) waitForLocalTranscriptions() bool {
+	// Changing zero to one reserves the transcription slot for this HTTP
+	// request; processLongSession releases it.
 	for !d.ongoingTranscriptions.CompareAndSwap(0, 1) {
 		select {
 		case <-d.transcriptionIdle:

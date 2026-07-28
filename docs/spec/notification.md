@@ -1,39 +1,18 @@
 # Notification Command
 
-The daemon emits notifications by invoking an external notification command. This keeps desktop notification behavior outside the Go daemon.
+`--notify-cmd <path>` configures an external notification command, keeping desktop integration outside the daemon. Without it, notifications are suppressed.
 
-The daemon may be configured with:
-
-```sh
-talk2text daemon --notify-cmd /home/meng/bin/talk2text-notify
-```
-
-If `--notify-cmd` is not set, the daemon should suppress notifications.
-
-The daemon invokes the configured notification command path as provided for each notification. It does not resolve symlinks, canonicalize the command path, or assume any particular routing mechanism behind the command.
-
-The daemon starts the notification command asynchronously as:
+For each notification the daemon starts:
 
 ```sh
-TALK2TEXT_NOTIFY_LEVEL=<level> \
+TALK2TEXT_NOTIFY_LEVEL=<info|error> \
 TALK2TEXT_NOTIFY_CODE=<code> \
 <notification-command> <message>
 ```
 
-The notification message is the command's only argument.
+The message is the only argument. Daemon-owned metadata overrides inherited or request-provided values.
 
-Command environment metadata:
-
-1. `TALK2TEXT_NOTIFY_LEVEL` is either `info` or `error`.
-2. `TALK2TEXT_NOTIFY_CODE` is a stable event or error-source code.
-
-These variables are daemon-owned. If the inherited daemon environment or a request environment contains the same variables, the daemon-provided values take precedence.
-
-Notification messages should start with an uppercase letter.
-
-Clip-specific notification messages, including both informational and error notifications, should include the daemon-local clip ID.
-
-For `info` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the lifecycle event. Daemon lifecycle event codes include:
+Informational codes describe lifecycle events:
 
 1. `record-start`
 2. `record-stop`
@@ -41,25 +20,8 @@ For `info` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the lifecycle event
 4. `transcribe-stop`
 5. `output-start`
 
-Other notification producers may define stable integration-specific informational codes. The daemon lifecycle list is not an exhaustive list of codes that a notification command may receive.
+Error codes identify a source such as `config`, `runtime`, `audio-capture`, `whisper`, or `output-command`. IPC request errors are returned to the client instead of producing notifications.
 
-For `error` notifications, `TALK2TEXT_NOTIFY_CODE` identifies the error source, such as `config`, `runtime`, `audio-capture`, `whisper`, or `output-command`. IPC request errors are returned to the client and should not emit user notifications.
+Clip-specific messages include the clip ID. Detailed diagnostics belong in stderr logs rather than user-facing messages.
 
-If an error happens in a user-triggered process and may prevent the user from seeing the result, the daemon should emit an error notification.
-
-Error notification messages should briefly identify:
-
-1. The stage where the error happened: recording, transcribing, or output processing.
-2. An identifier when available, such as the daemon-local clip sequence number.
-
-Detailed diagnostics, including stderr, response bodies, stack details, and low-level error values, belong in stderr logs, not in the notification message. The exact notification text is an implementation detail.
-
-Example notification command:
-
-```sh
-#!/usr/bin/env sh
-message="$1"
-notify-send -t 5000 'talk2text' "$message"
-```
-
-The daemon does not impose a timeout on notification commands during normal operation. Notification command startup failures should be logged but should not fail recording, transcription, or output handling. Notification command failures must not trigger another notification attempt. The daemon should reap notification command processes in the background. Later exit failures may also be logged.
+Notification startup or exit failures must not fail recording, transcription, or output handling, and must not trigger recursive notifications.

@@ -129,6 +129,8 @@ func (d *daemon) start(environment map[string]string, errChan chan error) {
 		close(errChan)
 		return
 	}
+	// Acknowledge after ownership validation; the capture transition continues
+	// asynchronously.
 	close(errChan)
 
 	d.warmTimer.Stop()
@@ -150,6 +152,8 @@ func (d *daemon) start(environment map[string]string, errChan chan error) {
 
 func (d *daemon) stop(originID string, errChan chan error) {
 	d.muCapture.Lock()
+	// A validated stop is always acknowledged; ownership checks may make it a
+	// successful no-op.
 	close(errChan)
 
 	if d.active == nil {
@@ -173,6 +177,8 @@ func (d *daemon) stop(originID string, errChan chan error) {
 			d.pendingStopClip = clipID
 			d.stopTimer = timer.NewCallbackTimer(d.cfg.StopDelay, func() {
 				d.muCapture.Lock()
+				// Both identities must still match so a stale timer cannot stop
+				// a replacement recording.
 				if d.active == nil || d.active.ID() != clipID || d.pendingStopClip != clipID {
 					d.muCapture.Unlock()
 					return

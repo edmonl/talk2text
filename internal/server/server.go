@@ -118,6 +118,8 @@ func writeResponse(conn net.Conn, handler Handler, resp response) {
 }
 
 func readRequest(r io.Reader) (Request, error) {
+	// Only the first JSON value is used. Limiting the decoder bounds it;
+	// malformed and truncated oversized values intentionally share an error.
 	decoder := json.NewDecoder(io.LimitReader(r, maxRequestBytes))
 	decoder.DisallowUnknownFields()
 

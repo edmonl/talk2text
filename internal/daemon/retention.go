@@ -35,6 +35,8 @@ func (d *daemon) releaseTranscript(clipID int) {
 
 	d.muTranscripts.Lock()
 	delete(d.protectedTranscripts, clipID)
+	// Completion may be out of order; never move the retention window backward
+	// when an older clip finishes later.
 	d.transcriptRetentionHighWatermark = max(clipID, d.transcriptRetentionHighWatermark)
 	files := d.getTranscriptNamesToPrune()
 	d.muTranscripts.Unlock()

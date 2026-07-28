@@ -37,6 +37,8 @@ const (
 	streamRecording
 )
 
+// The desireStream helpers require d.muCapture. Signals may coalesce; the
+// stored desired state is authoritative.
 func (d *daemon) desireStreamOff() {
 	d.desiredStreamState = streamOff
 	d.desiredStreamEnvironment = nil

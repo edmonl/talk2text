@@ -39,6 +39,8 @@ func (n *Notifier) emit(level, code, message string, environment []string) {
 	if n.cmd == "" {
 		return
 	}
+	// Append in precedence order: daemon environment, captured request
+	// environment, then daemon-owned metadata.
 	commandEnvironment := append(os.Environ(), environment...)
 	commandEnvironment = append(commandEnvironment,
 		notifyLevelEnv+"="+level,
@@ -52,6 +54,8 @@ func (n *Notifier) emit(level, code, message string, environment []string) {
 			n.log.Printf("notification command start failed: %v", err)
 			return
 		}
+		// Wait only reaps the process; notification failures are intentionally
+		// non-fatal after startup.
 		cmd.Wait()
 	}()
 }
